@@ -1,0 +1,11 @@
+[package]
+name = "talkladok"
+version = "0.1.0"
+authors = ["Rasmus Kaj <kaj@kth.se>"]
+edition = "2018"
+
+[dependencies]
+failure = "0.1.5"
+reqwest = "0.9.13"
+serde = "1.0.89"
+serde_derive = "1.0.89"
