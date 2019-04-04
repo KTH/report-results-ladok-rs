@@ -1,8 +1,8 @@
-use failure::Error;
+use failure::{format_err, Error};
 use reqwest::{Client, Identity};
 use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, BufRead, Read};
 use std::path::Path;
 
 fn read_cert(file: &Path) -> Result<Identity, Error> {
@@ -17,7 +17,7 @@ fn read_cert(file: &Path) -> Result<Identity, Error> {
 #[allow(non_snake_case)]
 struct Betygsgrad {
     GiltigSomSlutbetyg: bool,
-    ID: u32,
+    ID: usize,
     Kod: String,
 }
 
@@ -27,6 +27,12 @@ struct Betygskala {
     Betygsgrad: Vec<Betygsgrad>,
     ID: String,
     Kod: String,
+}
+
+impl Betygskala {
+    fn get(&self, kod: &str) -> Option<&Betygsgrad> {
+        self.Betygsgrad.iter().find(|b| b.Kod == kod)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -53,7 +59,7 @@ struct Student {
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct StudieResultat {
-    Uid: String,
+    Uid: Option<String>,
     AktuellKursinstans: Option<String>,
     AktuelltKurstillfalle: Option<String>,
     // Anonymiseringskod: Option<String>, (ignorerar vi)
@@ -70,6 +76,96 @@ struct StudieResultat {
 struct SokresultatStudieresultatResultat {
     Resultat: Vec<StudieResultat>,
     TotaltAntalPoster: usize,
+}
+
+impl SokresultatStudieresultatResultat {
+    fn find_student(&self, uid: &str) -> Option<&StudieResultat> {
+        self.Resultat
+            .iter()
+            .find(|r| r.Student.as_ref().map(|s| s.Uid == uid).unwrap_or(false))
+    }
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_SkapaResultat
+#[derive(Debug, Serialize)]
+#[allow(non_snake_case)]
+struct SkapaResultat {
+    Uid: Option<String>,
+    Betygsgrad: Option<usize>,         // kort numeriskt id
+    BetygsskalaID: usize,              // kort numeriskt id
+    Examinationsdatum: Option<String>, // TODO: Use a date type
+    /*
+    <rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
+    <rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
+    <rr:Noteringar> rr:Notering </rr:Noteringar> [0..*]
+    <rr:Projekttitel> ... </rr:Projekttitel> [0..1]
+    <rr:AktivitetstillfalleUID> xs:string </rr:AktivitetstillfalleUID> [0..1]
+     */
+    StudieresultatUID: Option<String>,
+    UtbildningsinstansUID: Option<String>,
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_SkapaFlera
+#[derive(Debug, Serialize)]
+#[allow(non_snake_case)]
+struct SkapaFlera {
+    LarosateID: usize, // KTH is 29
+    Resultat: Vec<SkapaResultat>,
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_ResultatLista
+#[derive(Debug, Serialize)]
+#[allow(non_snake_case)]
+struct UppdateraFlera {
+    Resultat: Vec<UppdateraResultat>,
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_UppdateraResultat
+#[derive(Debug, Serialize)]
+#[allow(non_snake_case)]
+struct UppdateraResultat {
+    // <!-- ' base:BaseEntitet ' super type was not found in this schema. Some elements and attributes may be missing. -->
+    Betygsgrad: Option<usize>,
+    BetygsskalaID: usize,
+    Examinationsdatum: Option<String>, // xs:date
+    //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
+    //<rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
+    //<rr:Noteringar> rr:Notering </rr:Noteringar> [0..*]
+    //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
+    //<rr:AktivitetstillfalleUID> xs:string </rr:AktivitetstillfalleUID> [0..1]
+    ResultatUID: Option<String>,
+    //<rr:SenasteResultatandring> xs:dateTime </rr:SenasteResultatandring> [0..1]
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_ResultatLista
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct ResultatLista {
+    Resultat: Vec<Resultat>,
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_Resultat
+#[derive(Debug, Deserialize, Serialize)]
+#[allow(non_snake_case)]
+struct Resultat {
+    Uid: Option<String>,
+    AktivitetstillfalleUID: Option<String>,
+    // <at:Beslut> ... </at:Beslut> [0..1]
+    Betygsgrad: Option<usize>,
+    // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
+    BetygsskalaID: Option<usize>,
+    Examinationsdatum: Option<String>,
+    //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
+    //<rr:ForbereddForBorttag> xs:boolean </rr:ForbereddForBorttag> [0..1]
+    //<rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
+    //<rr:Klarmarkering> rr:Klarmarkera </rr:Klarmarkering> [0..1]
+    //<rr:KurstillfalleUID> xs:string </rr:KurstillfalleUID> [0..1]
+    //<rr:Noteringar> rr:Notering </rr:Noteringar> [0..*]
+    //<rr:ProcessStatus> xs:int </rr:ProcessStatus> [0..1]
+    //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
+    //<rr:SenasteResultatandring> xs:dateTime </rr:SenasteResultatandring> [0..1]
+    StudieresultatUID: Option<String>,
+    //<rr:UtbildningsinstansUID> xs:string </rr:UtbildningsinstansUID> [0..1]
 }
 
 struct Ladok {
@@ -127,12 +223,74 @@ impl Ladok {
             .send()?;
         Ok(result.json()?)
     }
+
+    fn skapa_studieresultat(&self, data: &SkapaFlera) -> Result<ResultatLista, Error> {
+        let url = format!("https://{}/resultat/studieresultat/skapa", self.server);
+        let mut result = self
+            .client
+            .post(&url)
+            .header("accept", "application/json")
+            .json(data)
+            .send()?;
+
+        if let Err(e) = result.error_for_status_ref() {
+            return Err(format_err!(
+                "Got {:?} on {:?}:\n{}\n",
+                e.status(),
+                e.url(),
+                result
+                    .text()
+                    .as_ref()
+                    .map(|s| s.as_ref())
+                    .unwrap_or("(no data)"),
+            ));
+        }
+        Ok(result.json()?)
+    }
+
+    fn uppdatera_studieresultat(&self, data: &UppdateraFlera) -> Result<ResultatLista, Error> {
+        let url = format!("https://{}/resultat/studieresultat/uppdatera", self.server);
+        let mut result = self
+            .client
+            .put(&url)
+            .header("accept", "application/json")
+            .json(data)
+            .send()?;
+
+        if let Err(e) = result.error_for_status_ref() {
+            return Err(format_err!(
+                "Got {:?} on {:?}:\n{}\n",
+                e.status(),
+                e.url(),
+                result
+                    .text()
+                    .as_ref()
+                    .map(|s| s.as_ref())
+                    .unwrap_or("(no data)"),
+            ));
+        }
+        Ok(result.json()?)
+    }
+}
+
+/// Get a studnet id and a grade from stdin
+///
+/// This emulates the part that gets things from canvas, it could just
+/// return some hardcoded values, but I don't want to write a student
+/// id in the source code.
+fn read_result_to_report() -> Vec<(String, String)> {
+    io::stdin().lock().lines().map(|line| {
+        let line = line.unwrap();
+        let mut words = line.split_whitespace();
+        (words.next().unwrap_or("").into(), words.next().unwrap_or("").into())
+    }).collect()
 }
 
 fn main() -> Result<(), Error> {
     let ladok = Ladok::new("api.test.ladok.se", "../cert/rr.p12".as_ref())?;
 
-    // dbg!(ladok.get_betygskala(131657)?);
+    // TODO Use the correct betygskala for each reported result.
+    let betygskala = ladok.get_betygskala(131657)?;
 
     // Kursen SE1010
     let _kursinstans = "7e0c378c-73d8-11e8-afa7-8e408e694e54";
@@ -143,7 +301,7 @@ fn main() -> Result<(), Error> {
     // TEN1 på ovanstående instans
     let _momentid_2 = "7dca24f2-73d8-11e8-b4e0-063f9afb40e3";
 
-    let resultat = dbg!(ladok.sok_studieresultat(kurstillf.into(), momentid_1.into())?);
+    let resultat = ladok.sok_studieresultat(kurstillf.into(), momentid_1.into())?;
     if resultat.Resultat.len() < resultat.TotaltAntalPoster {
         println!(
             "Warning: Paging in use, got {} of {} results",
@@ -152,5 +310,42 @@ fn main() -> Result<(), Error> {
         );
     }
 
+    for (student, grade) in read_result_to_report() {
+        let grade = betygskala.get(&grade)
+            .ok_or_else(|| format_err!("Grade {:?} not in {}", grade, betygskala.Kod))?;
+        let one = dbg!(resultat.find_student(&student))
+            .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
+
+        let mut data = SkapaFlera {
+            LarosateID: 29, // KTH is 29
+            Resultat: vec![],
+        };
+        data.Resultat.push(SkapaResultat {
+            Uid: one.Uid.clone(),
+            Betygsgrad: Some(grade.ID),
+            BetygsskalaID: betygskala.ID.parse()?,
+            Examinationsdatum: Some("2019-04-01".into()),
+            StudieresultatUID: one.Uid.clone(),
+            UtbildningsinstansUID: Some(momentid_1.into()),
+        });
+        dbg!(ladok.skapa_studieresultat(&dbg!(data))?);
+
+        /*
+        let data = UppdateraFlera {
+        Resultat: vec![UppdateraResultat {
+            //Uid: one.Uid.clone(),
+            // <at:Beslut> ... </at:Beslut> [0..1]
+            Betygsgrad: Some(grade.ID),
+            // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
+            BetygsskalaID: betygskala.ID.parse()?,
+            Examinationsdatum: Some("2019-04-01".into()),
+            ResultatUID: one.Uid.clone(),
+            //StudieresultatUID: one.Uid.clone(),
+            //<rr:UtbildningsinstansUID> xs:string </rr:UtbildningsinstansUID> [0..1]
+        }]
+        };
+        dbg!(ladok.uppdatera_studieresultat(&dbg!(data))?);
+         */
+    }
     Ok(())
 }
