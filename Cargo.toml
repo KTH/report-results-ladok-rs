@@ -3,6 +3,8 @@ name = "talkladok"
 version = "0.1.0"
 authors = ["Rasmus Kaj <kaj@kth.se>"]
 edition = "2018"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 failure = "0.1.5"
