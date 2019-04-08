@@ -1,5 +1,6 @@
 use failure::{format_err, Error};
-use reqwest::{Client, Identity};
+use reqwest::{Client, Identity, RequestBuilder};
+use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, BufRead, Read};
@@ -189,15 +190,10 @@ impl Ladok {
     }
 
     fn get_betygskala(&self, id: u32) -> Result<Betygskala, Error> {
-        Ok(self
-            .client
-            .get(&format!(
-                "https://{}/resultat/grunddata/betygsskala/{}",
-                self.server, id
-            ))
-            .header("accept", "application/json")
-            .send()?
-            .json()?)
+        do_json_or_err(self.client.get(&format!(
+            "https://{}/resultat/grunddata/betygsskala/{}",
+            self.server, id
+        )))
     }
 
     fn sok_studieresultat(
@@ -221,61 +217,38 @@ impl Ladok {
             ],
             Limit: 100,
         };
-        let mut result = self
-            .client
-            .put(&url)
-            .header("accept", "application/json")
-            .json(&data)
-            .send()?;
-        Ok(result.json()?)
+        do_json_or_err(self.client.put(&url).json(&data))
     }
 
     fn skapa_studieresultat(&self, data: &SkapaFlera) -> Result<ResultatLista, Error> {
         let url = format!("https://{}/resultat/studieresultat/skapa", self.server);
-        let mut result = self
-            .client
-            .post(&url)
-            .header("accept", "application/json")
-            .json(data)
-            .send()?;
-
-        if let Err(e) = result.error_for_status_ref() {
-            return Err(format_err!(
-                "Got {:?} on {:?}:\n{}\n",
-                e.status(),
-                e.url(),
-                result
-                    .text()
-                    .as_ref()
-                    .map(|s| s.as_ref())
-                    .unwrap_or("(no data)"),
-            ));
-        }
-        Ok(result.json()?)
+        do_json_or_err(self.client.post(&url).json(data))
     }
 
     fn uppdatera_studieresultat(&self, data: &UppdateraFlera) -> Result<ResultatLista, Error> {
         let url = format!("https://{}/resultat/studieresultat/uppdatera", self.server);
-        let mut result = self
-            .client
-            .put(&url)
-            .header("accept", "application/json")
-            .json(data)
-            .send()?;
+        do_json_or_err(self.client.put(&url).json(data))
+    }
+}
 
-        if let Err(e) = result.error_for_status_ref() {
-            return Err(format_err!(
-                "Got {:?} on {:?}:\n{}\n",
-                e.status(),
-                e.url(),
-                result
-                    .text()
-                    .as_ref()
-                    .map(|s| s.as_ref())
-                    .unwrap_or("(no data)"),
-            ));
-        }
-        Ok(result.json()?)
+fn do_json_or_err<T>(request: RequestBuilder) -> Result<T, Error>
+where
+    T: DeserializeOwned,
+{
+    let mut response = request.header("accept", "application/json").send()?;
+    if let Err(e) = response.error_for_status_ref() {
+        Err(format_err!(
+            "Got {:?} on {:?}:\n{}\n",
+            e.status(),
+            e.url(),
+            response
+                .text()
+                .as_ref()
+                .map(|s| s.as_ref())
+                .unwrap_or("(no data)"),
+        ))
+    } else {
+        Ok(response.json()?)
     }
 }
 
@@ -285,11 +258,18 @@ impl Ladok {
 /// return some hardcoded values, but I don't want to write a student
 /// id in the source code.
 fn read_result_to_report() -> Vec<(String, String)> {
-    io::stdin().lock().lines().map(|line| {
-        let line = line.unwrap();
-        let mut words = line.split_whitespace();
-        (words.next().unwrap_or("").into(), words.next().unwrap_or("").into())
-    }).collect()
+    io::stdin()
+        .lock()
+        .lines()
+        .map(|line| {
+            let line = line.unwrap();
+            let mut words = line.split_whitespace();
+            (
+                words.next().unwrap_or("").into(),
+                words.next().unwrap_or("").into(),
+            )
+        })
+        .collect()
 }
 
 fn main() -> Result<(), Error> {
@@ -317,7 +297,8 @@ fn main() -> Result<(), Error> {
     }
 
     for (student, grade) in read_result_to_report() {
-        let grade = betygskala.get(&grade)
+        let grade = betygskala
+            .get(&grade)
             .ok_or_else(|| format_err!("Grade {:?} not in {}", grade, betygskala.Kod))?;
         let one = dbg!(resultat.find_student(&student))
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
