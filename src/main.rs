@@ -58,7 +58,10 @@ struct Student {
 /// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_Studieresultat
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
-struct StudieResultat {
+struct Studieresultat {
+    LarosateID: Option<usize>,
+    SenastSparad: Option<String>, // xs:dateTime
+    SenastAndradAv: Option<String>,
     Uid: Option<String>,
     AktuellKursinstans: Option<String>,
     AktuelltKurstillfalle: Option<String>,
@@ -74,12 +77,12 @@ struct StudieResultat {
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct SokresultatStudieresultatResultat {
-    Resultat: Vec<StudieResultat>,
+    Resultat: Vec<Studieresultat>,
     TotaltAntalPoster: usize,
 }
 
 impl SokresultatStudieresultatResultat {
-    fn find_student(&self, uid: &str) -> Option<&StudieResultat> {
+    fn find_student(&self, uid: &str) -> Option<&Studieresultat> {
         self.Resultat
             .iter()
             .find(|r| r.Student.as_ref().map(|s| s.Uid == uid).unwrap_or(false))
@@ -117,6 +120,7 @@ struct SkapaFlera {
 #[derive(Debug, Serialize)]
 #[allow(non_snake_case)]
 struct UppdateraFlera {
+    LarosateID: usize, // KTH is 29
     Resultat: Vec<UppdateraResultat>,
 }
 
@@ -125,6 +129,8 @@ struct UppdateraFlera {
 #[allow(non_snake_case)]
 struct UppdateraResultat {
     // <!-- ' base:BaseEntitet ' super type was not found in this schema. Some elements and attributes may be missing. -->
+    Uid: Option<String>,
+
     Betygsgrad: Option<usize>,
     BetygsskalaID: usize,
     Examinationsdatum: Option<String>, // xs:date
@@ -165,7 +171,7 @@ struct Resultat {
     //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
     //<rr:SenasteResultatandring> xs:dateTime </rr:SenasteResultatandring> [0..1]
     StudieresultatUID: Option<String>,
-    //<rr:UtbildningsinstansUID> xs:string </rr:UtbildningsinstansUID> [0..1]
+    UtbildningsinstansUID: Option<String>,
 }
 
 struct Ladok {
@@ -332,17 +338,14 @@ fn main() -> Result<(), Error> {
 
         /*
         let data = UppdateraFlera {
-        Resultat: vec![UppdateraResultat {
-            //Uid: one.Uid.clone(),
-            // <at:Beslut> ... </at:Beslut> [0..1]
-            Betygsgrad: Some(grade.ID),
-            // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
-            BetygsskalaID: betygskala.ID.parse()?,
-            Examinationsdatum: Some("2019-04-01".into()),
-            ResultatUID: one.Uid.clone(),
-            //StudieresultatUID: one.Uid.clone(),
-            //<rr:UtbildningsinstansUID> xs:string </rr:UtbildningsinstansUID> [0..1]
-        }]
+            LarosateID: 29, // KTH is 29
+            Resultat: vec![UppdateraResultat {
+                Uid: one.Uid.clone(),
+                Betygsgrad: Some(grade.ID),
+                BetygsskalaID: betygskala.ID.parse()?,
+                Examinationsdatum: Some("2019-04-01".into()),
+                ResultatUID: one.Uid.clone(),
+            }]
         };
         dbg!(ladok.uppdatera_studieresultat(&dbg!(data))?);
          */
