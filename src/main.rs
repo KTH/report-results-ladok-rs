@@ -69,17 +69,57 @@ struct Studieresultat {
     // Anonymiseringskod: Option<String>, (ignorerar vi)
     // Avbrott ignorerar vi tills vidare
     KursUID: Option<String>,
-    // Rapporteringskontext ignorerar vi tills vidare
-    // ResultatPaUtbildningar:  ignorerar vi tills vidare
+    Rapporteringskontext: Option<Rapporteringskontext>,
+    ResultatPaUtbildningar: Vec<ResultatPaUtbildning>,
     SenastRegistrerad: Option<String>,
     Student: Option<Student>,
 }
 
+impl Studieresultat {
+    fn get_arbetsunderlag(&self, kurstillf: &str) -> Option<&Resultat> {
+        for rpu in &self.ResultatPaUtbildningar {
+            if let Some(au) = rpu.Arbetsunderlag.as_ref() {
+                if au.UtbildningsinstansUID.as_ref().map(|s| s.as_ref()) == Some(kurstillf) {
+                    return Some(au);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_SokresultatStudieresultatResultat
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct SokresultatStudieresultatResultat {
     Resultat: Vec<Studieresultat>,
     TotaltAntalPoster: usize,
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_Rapporteringskontext
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct Rapporteringskontext {
+    Anonymiseringskod: Option<String>,
+    BetygsskalaID: Option<usize>,
+    KravPaHanvisningTillBeslutshandling: bool,
+    KravPaProjekttitel: bool,
+    UtbildningUID: String,
+    UtbildningsinstansUID: String,
+}
+
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_ResultatPaUtbildning
+#[derive(Debug, Deserialize)]
+#[allow(non_snake_case)]
+struct ResultatPaUtbildning {
+    // ' dap:Base ' super type was not found in this schema. Some elements and attributes may be missing.
+    Arbetsunderlag: Option<Resultat>,
+    HarTillgodoraknande: Option<bool>,
+    HeltTillgodoraknad: Option<bool>,
+    KanExkluderas: Option<bool>,
+    SenastAttesteradeResultat: Option<Resultat>,
+    // <rr:TotalTillgodoraknadOmfattning> xs:decimal </rr:TotalTillgodoraknadOmfattning> [0..1]
+    UtbildningUID: Option<String>,
 }
 
 impl SokresultatStudieresultatResultat {
@@ -141,7 +181,7 @@ struct UppdateraResultat {
     //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
     //<rr:AktivitetstillfalleUID> xs:string </rr:AktivitetstillfalleUID> [0..1]
     ResultatUID: Option<String>,
-    //<rr:SenasteResultatandring> xs:dateTime </rr:SenasteResultatandring> [0..1]
+    SenasteResultatandring: Option<String>, //  xs:dateTime
 }
 
 /// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_ResultatLista
@@ -170,7 +210,7 @@ struct Resultat {
     //<rr:Noteringar> rr:Notering </rr:Noteringar> [0..*]
     //<rr:ProcessStatus> xs:int </rr:ProcessStatus> [0..1]
     //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
-    //<rr:SenasteResultatandring> xs:dateTime </rr:SenasteResultatandring> [0..1]
+    SenasteResultatandring: Option<String>, // xs:dateTime
     StudieresultatUID: Option<String>,
     UtbildningsinstansUID: Option<String>,
 }
@@ -296,6 +336,9 @@ fn main() -> Result<(), Error> {
         );
     }
 
+    let mut create_queue = vec![];
+    let mut update_queue = vec![];
+
     for (student, grade) in read_result_to_report() {
         let grade = betygskala
             .get(&grade)
@@ -303,33 +346,40 @@ fn main() -> Result<(), Error> {
         let one = dbg!(resultat.find_student(&student))
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
 
-        let mut data = SkapaFlera {
-            LarosateID: 29, // KTH is 29
-            Resultat: vec![],
-        };
-        data.Resultat.push(SkapaResultat {
-            Uid: one.Uid.clone(),
-            Betygsgrad: Some(grade.ID),
-            BetygsskalaID: betygskala.ID.parse()?,
-            Examinationsdatum: Some("2019-04-01".into()),
-            StudieresultatUID: one.Uid.clone(),
-            UtbildningsinstansUID: Some(momentid_1.into()),
-        });
-        dbg!(ladok.skapa_studieresultat(&dbg!(data))?);
-
-        /*
-        let data = UppdateraFlera {
-            LarosateID: 29, // KTH is 29
-            Resultat: vec![UppdateraResultat {
+        if let Some(underlag) = dbg!(one.get_arbetsunderlag(momentid_1)) {
+            update_queue.push(UppdateraResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
                 BetygsskalaID: betygskala.ID.parse()?,
                 Examinationsdatum: Some("2019-04-01".into()),
-                ResultatUID: one.Uid.clone(),
-            }]
+                ResultatUID: underlag.Uid.clone(),
+                SenasteResultatandring: underlag.SenasteResultatandring.clone(),
+            });
+        } else {
+            create_queue.push(SkapaResultat {
+                Uid: one.Uid.clone(),
+                Betygsgrad: Some(grade.ID),
+                BetygsskalaID: betygskala.ID.parse()?,
+                Examinationsdatum: Some("2019-04-01".into()),
+                StudieresultatUID: one.Uid.clone(),
+                UtbildningsinstansUID: Some(momentid_1.into()),
+            });
+        }
+    }
+
+    if !create_queue.is_empty() {
+        let data = SkapaFlera {
+            LarosateID: 29, // KTH is 29
+            Resultat: create_queue,
+        };
+        dbg!(ladok.skapa_studieresultat(&dbg!(data))?);
+    }
+    if !update_queue.is_empty() {
+        let data = UppdateraFlera {
+            LarosateID: 29, // KTH is 29
+            Resultat: update_queue,
         };
         dbg!(ladok.uppdatera_studieresultat(&dbg!(data))?);
-         */
     }
     Ok(())
 }
