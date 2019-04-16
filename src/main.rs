@@ -1,9 +1,11 @@
 use failure::{format_err, Error};
 use reqwest::{Client, Identity, RequestBuilder};
 use serde::de::DeserializeOwned;
+use serde::de::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, BufRead, Read};
+use std::num::NonZeroU32;
 use std::path::Path;
 
 fn read_cert(file: &Path) -> Result<Identity, Error> {
@@ -18,16 +20,46 @@ fn read_cert(file: &Path) -> Result<Identity, Error> {
 #[allow(non_snake_case)]
 struct Betygsgrad {
     GiltigSomSlutbetyg: bool,
-    ID: usize,
+    ID: BetygsgradID,
     Kod: String,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct BetygsgradID(NonZeroU32);
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct Betygskala {
     Betygsgrad: Vec<Betygsgrad>,
-    ID: String,
+    ID: BetygsskalaID,
     Kod: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(transparent)]
+struct BetygsskalaID(NonZeroU32);
+
+impl<'de> Deserialize<'de> for BetygsskalaID {
+    /// A custom deserializer, since the value sometimes appear as a quoted string i Ladok json.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+        D::Error: serde::de::Error,
+    {
+        use serde::de::Error;
+        use serde_json::Value;
+        use std::convert::TryInto;
+        let v = Value::deserialize(deserializer)?;
+        let n = v
+            .as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            .ok_or_else(|| D::Error::custom("non-integer"))?
+            .try_into()
+            .map_err(|_| D::Error::custom("overflow"))?;
+        Ok(BetygsskalaID(
+            NonZeroU32::new(n).ok_or_else(|| D::Error::custom("unexpected zero"))?,
+        ))
+    }
 }
 
 impl Betygskala {
@@ -56,11 +88,18 @@ struct Student {
     Uid: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct LarosateID(NonZeroU32);
+
+impl LarosateID {
+    const KTH: LarosateID = LarosateID(unsafe { NonZeroU32::new_unchecked(29) });
+}
+
 /// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_Studieresultat
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct Studieresultat {
-    LarosateID: Option<usize>,
+    LarosateID: Option<LarosateID>,
     SenastSparad: Option<String>, // xs:dateTime
     SenastAndradAv: Option<String>,
     Uid: Option<String>,
@@ -101,7 +140,7 @@ struct SokresultatStudieresultatResultat {
 #[allow(non_snake_case)]
 struct Rapporteringskontext {
     Anonymiseringskod: Option<String>,
-    BetygsskalaID: Option<usize>,
+    BetygsskalaID: Option<BetygsskalaID>,
     KravPaHanvisningTillBeslutshandling: bool,
     KravPaProjekttitel: bool,
     UtbildningUID: String,
@@ -135,8 +174,8 @@ impl SokresultatStudieresultatResultat {
 #[allow(non_snake_case)]
 struct SkapaResultat {
     Uid: Option<String>,
-    Betygsgrad: Option<usize>,         // kort numeriskt id
-    BetygsskalaID: usize,              // kort numeriskt id
+    Betygsgrad: Option<BetygsgradID>,  // kort numeriskt id
+    BetygsskalaID: BetygsskalaID,      // kort numeriskt id
     Examinationsdatum: Option<String>, // TODO: Use a date type
     /*
     <rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
@@ -153,7 +192,7 @@ struct SkapaResultat {
 #[derive(Debug, Serialize)]
 #[allow(non_snake_case)]
 struct SkapaFlera {
-    LarosateID: usize, // KTH is 29
+    LarosateID: LarosateID,
     Resultat: Vec<SkapaResultat>,
 }
 
@@ -161,7 +200,7 @@ struct SkapaFlera {
 #[derive(Debug, Serialize)]
 #[allow(non_snake_case)]
 struct UppdateraFlera {
-    LarosateID: usize, // KTH is 29
+    LarosateID: LarosateID,
     Resultat: Vec<UppdateraResultat>,
 }
 
@@ -172,8 +211,8 @@ struct UppdateraResultat {
     // <!-- ' base:BaseEntitet ' super type was not found in this schema. Some elements and attributes may be missing. -->
     Uid: Option<String>,
 
-    Betygsgrad: Option<usize>,
-    BetygsskalaID: usize,
+    Betygsgrad: Option<BetygsgradID>,
+    BetygsskalaID: BetygsskalaID,
     Examinationsdatum: Option<String>, // xs:date
     //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
     //<rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
@@ -198,9 +237,9 @@ struct Resultat {
     Uid: Option<String>,
     AktivitetstillfalleUID: Option<String>,
     // <at:Beslut> ... </at:Beslut> [0..1]
-    Betygsgrad: Option<usize>,
+    Betygsgrad: Option<BetygsgradID>,
     // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
-    BetygsskalaID: Option<usize>,
+    BetygsskalaID: Option<BetygsskalaID>,
     Examinationsdatum: Option<String>,
     //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
     //<rr:ForbereddForBorttag> xs:boolean </rr:ForbereddForBorttag> [0..1]
@@ -350,7 +389,7 @@ fn main() -> Result<(), Error> {
             update_queue.push(UppdateraResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
-                BetygsskalaID: betygskala.ID.parse()?,
+                BetygsskalaID: betygskala.ID,
                 Examinationsdatum: Some("2019-04-01".into()),
                 ResultatUID: underlag.Uid.clone(),
                 SenasteResultatandring: underlag.SenasteResultatandring.clone(),
@@ -359,7 +398,7 @@ fn main() -> Result<(), Error> {
             create_queue.push(SkapaResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
-                BetygsskalaID: betygskala.ID.parse()?,
+                BetygsskalaID: betygskala.ID,
                 Examinationsdatum: Some("2019-04-01".into()),
                 StudieresultatUID: one.Uid.clone(),
                 UtbildningsinstansUID: Some(momentid_1.into()),
@@ -369,14 +408,14 @@ fn main() -> Result<(), Error> {
 
     if !create_queue.is_empty() {
         let data = SkapaFlera {
-            LarosateID: 29, // KTH is 29
+            LarosateID: LarosateID::KTH,
             Resultat: create_queue,
         };
         dbg!(ladok.skapa_studieresultat(&dbg!(data))?);
     }
     if !update_queue.is_empty() {
         let data = UppdateraFlera {
-            LarosateID: 29, // KTH is 29
+            LarosateID: LarosateID::KTH,
             Resultat: update_queue,
         };
         dbg!(ladok.uppdatera_studieresultat(&dbg!(data))?);
