@@ -1,3 +1,4 @@
+use chrono::{NaiveDate, NaiveDateTime};
 use failure::{format_err, Error};
 use reqwest::{Client, Identity, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -100,7 +101,7 @@ impl LarosateID {
 #[allow(non_snake_case)]
 struct Studieresultat {
     LarosateID: Option<LarosateID>,
-    SenastSparad: Option<String>, // xs:dateTime
+    SenastSparad: Option<NaiveDateTime>,
     SenastAndradAv: Option<String>,
     Uid: Option<String>,
     AktuellKursinstans: Option<String>,
@@ -110,7 +111,7 @@ struct Studieresultat {
     KursUID: Option<String>,
     Rapporteringskontext: Option<Rapporteringskontext>,
     ResultatPaUtbildningar: Vec<ResultatPaUtbildning>,
-    SenastRegistrerad: Option<String>,
+    SenastRegistrerad: Option<NaiveDateTime>,
     Student: Option<Student>,
 }
 
@@ -174,9 +175,9 @@ impl SokresultatStudieresultatResultat {
 #[allow(non_snake_case)]
 struct SkapaResultat {
     Uid: Option<String>,
-    Betygsgrad: Option<BetygsgradID>,  // kort numeriskt id
-    BetygsskalaID: BetygsskalaID,      // kort numeriskt id
-    Examinationsdatum: Option<String>, // TODO: Use a date type
+    Betygsgrad: Option<BetygsgradID>,
+    BetygsskalaID: BetygsskalaID,
+    Examinationsdatum: Option<NaiveDate>,
     /*
     <rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
     <rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
@@ -213,14 +214,14 @@ struct UppdateraResultat {
 
     Betygsgrad: Option<BetygsgradID>,
     BetygsskalaID: BetygsskalaID,
-    Examinationsdatum: Option<String>, // xs:date
+    Examinationsdatum: Option<NaiveDate>,
     //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
     //<rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
     //<rr:Noteringar> rr:Notering </rr:Noteringar> [0..*]
     //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
     //<rr:AktivitetstillfalleUID> xs:string </rr:AktivitetstillfalleUID> [0..1]
     ResultatUID: Option<String>,
-    SenasteResultatandring: Option<String>, //  xs:dateTime
+    SenasteResultatandring: Option<NaiveDateTime>,
 }
 
 /// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#type_ResultatLista
@@ -240,7 +241,7 @@ struct Resultat {
     Betygsgrad: Option<BetygsgradID>,
     // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
     BetygsskalaID: Option<BetygsskalaID>,
-    Examinationsdatum: Option<String>,
+    Examinationsdatum: Option<NaiveDate>,
     //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
     //<rr:ForbereddForBorttag> xs:boolean </rr:ForbereddForBorttag> [0..1]
     //<rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]
@@ -249,7 +250,7 @@ struct Resultat {
     //<rr:Noteringar> rr:Notering </rr:Noteringar> [0..*]
     //<rr:ProcessStatus> xs:int </rr:ProcessStatus> [0..1]
     //<rr:Projekttitel> ... </rr:Projekttitel> [0..1]
-    SenasteResultatandring: Option<String>, // xs:dateTime
+    SenasteResultatandring: Option<NaiveDateTime>,
     StudieresultatUID: Option<String>,
     UtbildningsinstansUID: Option<String>,
 }
@@ -385,12 +386,13 @@ fn main() -> Result<(), Error> {
         let one = dbg!(resultat.find_student(&student))
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
 
+        let exam_date = NaiveDate::from_ymd(2019, 4, 16);
         if let Some(underlag) = dbg!(one.get_arbetsunderlag(momentid_1)) {
             update_queue.push(UppdateraResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
                 BetygsskalaID: betygskala.ID,
-                Examinationsdatum: Some("2019-04-01".into()),
+                Examinationsdatum: Some(exam_date),
                 ResultatUID: underlag.Uid.clone(),
                 SenasteResultatandring: underlag.SenasteResultatandring.clone(),
             });
@@ -399,7 +401,7 @@ fn main() -> Result<(), Error> {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
                 BetygsskalaID: betygskala.ID,
-                Examinationsdatum: Some("2019-04-01".into()),
+                Examinationsdatum: Some(exam_date),
                 StudieresultatUID: one.Uid.clone(),
                 UtbildningsinstansUID: Some(momentid_1.into()),
             });
