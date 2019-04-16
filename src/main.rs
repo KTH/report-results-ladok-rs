@@ -310,7 +310,7 @@ impl Ladok {
             "https://{}/resultat/studieresultat/rapportera/utbildningsinstans/{}/sok",
             self.server, moment,
         );
-        let data = StudieresultatForRapporteringSokVarden {
+        let mut data = StudieresultatForRapporteringSokVarden {
             KurstillfallenUID: vec![kurstillf],
             Page: 1,
             Filtrering: vec!["OBEHANDLADE".into(), "UTKAST".into()],
@@ -322,7 +322,23 @@ impl Ladok {
             ],
             Limit: 100,
         };
-        do_json_or_err(self.client.put(&url).json(&data))
+        let mut resultat: SokresultatStudieresultatResultat =
+            do_json_or_err(self.client.put(&url).json(&data))?;
+
+        while resultat.Resultat.len() < resultat.TotaltAntalPoster {
+            data.Page += 1;
+            let r2: SokresultatStudieresultatResultat =
+                do_json_or_err(self.client.put(&url).json(&data))?;
+            resultat.Resultat.extend(r2.Resultat.into_iter());
+        }
+        println!(
+            "Got {} of {} results, after fething {} page(s) of up to {} students.",
+            resultat.Resultat.len(),
+            resultat.TotaltAntalPoster,
+            data.Page,
+            data.Limit,
+        );
+        Ok(resultat)
     }
 
     fn skapa_studieresultat(&self, data: &SkapaFlera) -> Result<ResultatLista, Error> {
@@ -393,13 +409,6 @@ fn main() -> Result<(), Error> {
     let _momentid_2 = "7dca24f2-73d8-11e8-b4e0-063f9afb40e3";
 
     let resultat = ladok.sok_studieresultat(kurstillf.into(), momentid_1.into())?;
-    if resultat.Resultat.len() < resultat.TotaltAntalPoster {
-        println!(
-            "Warning: Paging in use, got {} of {} results",
-            resultat.Resultat.len(),
-            resultat.TotaltAntalPoster
-        );
-    }
 
     let mut create_queue = vec![];
     let mut update_queue = vec![];
