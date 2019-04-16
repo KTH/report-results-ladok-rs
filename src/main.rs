@@ -1,9 +1,10 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use failure::{format_err, Error};
 use reqwest::{Client, Identity, RequestBuilder};
-use serde::de::DeserializeOwned;
-use serde::de::{Deserialize, Deserializer};
+use serde::de::{Deserialize, DeserializeOwned, Deserializer, Visitor};
 use serde_derive::{Deserialize, Serialize};
+use std::convert::TryInto;
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, Read};
 use std::num::NonZeroU32;
@@ -47,19 +48,43 @@ impl<'de> Deserialize<'de> for BetygsskalaID {
         D: Deserializer<'de>,
         D::Error: serde::de::Error,
     {
-        use serde::de::Error;
-        use serde_json::Value;
-        use std::convert::TryInto;
-        let v = Value::deserialize(deserializer)?;
-        let n = v
-            .as_u64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-            .ok_or_else(|| D::Error::custom("non-integer"))?
-            .try_into()
-            .map_err(|_| D::Error::custom("overflow"))?;
-        Ok(BetygsskalaID(
-            NonZeroU32::new(n).ok_or_else(|| D::Error::custom("unexpected zero"))?,
-        ))
+        struct MyVisitor;
+        impl<'de> Visitor<'de> for MyVisitor {
+            type Value = BetygsskalaID;
+
+            fn expecting(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt.write_str("integer or string")
+            }
+
+            fn visit_u32<E>(self, val: u32) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match NonZeroU32::new(val) {
+                    Some(val) => Ok(BetygsskalaID(val)),
+                    None => Err(E::custom("invalid integer value")),
+                }
+            }
+
+            fn visit_u64<E>(self, val: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_u32(val.try_into().map_err(|_| E::custom("overflow"))?)
+            }
+
+            fn visit_str<E>(self, val: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match val.parse() {
+                    Ok(val) => self.visit_u32(val),
+                    Err(_) => Err(E::custom("failed to parse integer")),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(MyVisitor)
     }
 }
 
