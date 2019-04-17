@@ -77,10 +77,7 @@ impl<'de> Deserialize<'de> for BetygsskalaID {
             where
                 E: serde::de::Error,
             {
-                match val.parse() {
-                    Ok(val) => self.visit_u32(val),
-                    Err(_) => Err(E::custom("failed to parse integer")),
-                }
+                self.visit_u32(val.parse().map_err(|_| E::custom("failed to parse integer"))?)
             }
         }
 
@@ -94,17 +91,21 @@ impl Betygskala {
     }
 }
 
+/// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se-resultat.html#element_StudieresultatForRapporteringSokVarden
 #[derive(Debug, Serialize)]
 #[allow(non_snake_case)]
 struct StudieresultatForRapporteringSokVarden {
+    // ' dap:Base ' super type was not found in this schema. Some elements and attributes may be missing.
+    Filtrering: Vec<String>, // rr:StudieresultatTillstandVidRapporteringEnum [0..*]
+    // <rr:GruppUID> xs:string </rr:GruppUID> [0..1] (not used)
     KurstillfallenUID: Vec<String>,
-    Page: u32,
-    Filtrering: Vec<String>,
-    UtbildningsinstansUID: Option<String>,
+    Limit: u32,
     /// very important to have order by otherwise you get really
     /// strange results with missing data and duplicate students
-    OrderBy: Vec<String>,
-    Limit: u32,
+    OrderBy: Vec<String>, // rr:StudieresultatOrderByEnum [0..*]
+    Page: u32,
+    // <rr:StudenterUID> xs:string </rr:StudenterUID> [0..*] (not used)
+    UtbildningsinstansUID: Option<String>,
 }
 
 /// https://www.test.ladok.se/restdoc/schemas/schemas.ladok.se.html#type_Student
@@ -144,7 +145,7 @@ impl Studieresultat {
     fn get_arbetsunderlag(&self, kurstillf: &str) -> Option<&Resultat> {
         for rpu in &self.ResultatPaUtbildningar {
             if let Some(au) = rpu.Arbetsunderlag.as_ref() {
-                if au.UtbildningsinstansUID.as_ref().map(|s| s.as_ref()) == Some(kurstillf) {
+                if au.UtbildningsinstansUID.as_ref().map(AsRef::as_ref) == Some(kurstillf) {
                     return Some(au);
                 }
             }
@@ -365,7 +366,7 @@ where
             response
                 .text()
                 .as_ref()
-                .map(|s| s.as_ref())
+                .map(AsRef::as_ref)
                 .unwrap_or("(no data)"),
         ))
     } else {
@@ -397,7 +398,7 @@ fn main() -> Result<(), Error> {
     let ladok = Ladok::new("api.test.ladok.se", "../cert/rr.p12".as_ref())?;
 
     // TODO Use the correct betygskala for each reported result.
-    let betygskala = ladok.get_betygskala(131657)?;
+    let betygskala = ladok.get_betygskala(131_657)?;
 
     // Kursen SE1010
     let _kursinstans = "7e0c378c-73d8-11e8-afa7-8e408e694e54";
@@ -421,14 +422,14 @@ fn main() -> Result<(), Error> {
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
 
         let exam_date = NaiveDate::from_ymd(2019, 4, 16);
-        if let Some(underlag) = dbg!(one.get_arbetsunderlag(momentid_1)) {
+        if let Some(underlag) = one.get_arbetsunderlag(momentid_1) {
             update_queue.push(UppdateraResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
                 BetygsskalaID: betygskala.ID,
                 Examinationsdatum: Some(exam_date),
                 ResultatUID: underlag.Uid.clone(),
-                SenasteResultatandring: underlag.SenasteResultatandring.clone(),
+                SenasteResultatandring: underlag.SenasteResultatandring,
             });
         } else {
             create_queue.push(SkapaResultat {
@@ -441,20 +442,25 @@ fn main() -> Result<(), Error> {
             });
         }
     }
-
+    eprintln!(
+        "There are {} results to create and {} to update",
+        create_queue.len(),
+        update_queue.len(),
+    );
     if !create_queue.is_empty() {
         let data = SkapaFlera {
             LarosateID: LarosateID::KTH,
             Resultat: create_queue,
         };
-        dbg!(ladok.skapa_studieresultat(&dbg!(data))?);
+        ladok.skapa_studieresultat(&data)?;
     }
     if !update_queue.is_empty() {
         let data = UppdateraFlera {
             LarosateID: LarosateID::KTH,
             Resultat: update_queue,
         };
-        dbg!(ladok.uppdatera_studieresultat(&dbg!(data))?);
+        ladok.uppdatera_studieresultat(&data)?;
     }
+    eprintln!("Ok.  Done.");
     Ok(())
 }
