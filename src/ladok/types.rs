@@ -1,6 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime};
-use serde::de::{Deserialize, Deserializer, Visitor};
-use serde_derive::{Deserialize, Serialize};
+use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 use std::convert::TryInto;
 use std::fmt;
 use std::num::NonZeroU32;
@@ -25,7 +24,6 @@ pub struct Betygskala {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialOrd, Ord, PartialEq, Eq)]
-#[serde(transparent)]
 pub struct BetygsskalaID(NonZeroU32);
 
 impl fmt::Display for BetygsskalaID {

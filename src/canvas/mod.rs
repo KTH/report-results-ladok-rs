@@ -1,7 +1,7 @@
 use chrono::{DateTime, FixedOffset};
 use failure::Error;
 use reqwest::Client;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct CourseRoom {
