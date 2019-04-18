@@ -13,7 +13,7 @@ pub struct Betygsgrad {
     Kod: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialOrd, Ord, PartialEq, Eq)]
 pub struct BetygsgradID(NonZeroU32);
 
 #[derive(Debug, Deserialize)]
@@ -265,7 +265,7 @@ pub struct Resultat {
     pub Uid: Option<String>,
     AktivitetstillfalleUID: Option<String>,
     // <at:Beslut> ... </at:Beslut> [0..1]
-    Betygsgrad: Option<BetygsgradID>,
+    pub Betygsgrad: Option<BetygsgradID>,
     // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
     BetygsskalaID: Option<BetygsskalaID>,
     Examinationsdatum: Option<NaiveDate>,

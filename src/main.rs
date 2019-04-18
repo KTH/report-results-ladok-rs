@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::Local;
 use failure::{format_err, Error};
 use reqwest::Identity;
 use std::fs::File;
@@ -54,13 +54,14 @@ fn main() -> Result<(), Error> {
     let mut create_queue = vec![];
     let mut update_queue = vec![];
 
+    // Note: If possible, use a date from canvas.  Otherwise, just set
+    // the current date when making a change.
+    let exam_date = Local::now().naive_local().date();
+
     for (student, grade) in read_result_to_report() {
         let one = resultat
             .find_student(&student)
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
-
-        // TODO: Get exam_date from canvas.
-        let exam_date = NaiveDate::from_ymd(2019, 4, 16);
 
         let betygskala = one
             .get_betygsskala()
@@ -68,14 +69,20 @@ fn main() -> Result<(), Error> {
         let grade = ladok.get_grade(betygskala, &grade)?;
 
         if let Some(underlag) = one.get_arbetsunderlag(momentid_1) {
-            update_queue.push(UppdateraResultat {
-                Uid: one.Uid.clone(),
-                Betygsgrad: Some(grade.ID),
-                BetygsskalaID: betygskala,
-                Examinationsdatum: Some(exam_date),
-                ResultatUID: underlag.Uid.clone(),
-                SenasteResultatandring: underlag.SenasteResultatandring,
-            });
+            if underlag.Betygsgrad != Some(grade.ID) {
+                eprintln!(
+                    "Updating grade from {:?} to {:?} for {:?}",
+                    underlag.Betygsgrad, grade, student
+                );
+                update_queue.push(UppdateraResultat {
+                    Uid: one.Uid.clone(),
+                    Betygsgrad: Some(grade.ID),
+                    BetygsskalaID: betygskala,
+                    Examinationsdatum: Some(exam_date),
+                    ResultatUID: underlag.Uid.clone(),
+                    SenasteResultatandring: underlag.SenasteResultatandring,
+                });
+            }
         } else {
             create_queue.push(SkapaResultat {
                 Uid: one.Uid.clone(),
