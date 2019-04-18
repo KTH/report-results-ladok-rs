@@ -3,6 +3,7 @@ use failure::{format_err, Error};
 use reqwest::{Client, Identity, RequestBuilder};
 use serde::de::{Deserialize, DeserializeOwned, Deserializer, Visitor};
 use serde_derive::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::fmt;
 use std::fs::File;
@@ -18,7 +19,7 @@ fn read_cert(file: &Path) -> Result<Identity, Error> {
     Ok(id)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[allow(non_snake_case)]
 struct Betygsgrad {
     GiltigSomSlutbetyg: bool,
@@ -37,7 +38,7 @@ struct Betygskala {
     Kod: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, PartialOrd, Ord, PartialEq, Eq)]
 #[serde(transparent)]
 struct BetygsskalaID(NonZeroU32);
 
@@ -77,7 +78,10 @@ impl<'de> Deserialize<'de> for BetygsskalaID {
             where
                 E: serde::de::Error,
             {
-                self.visit_u32(val.parse().map_err(|_| E::custom("failed to parse integer"))?)
+                self.visit_u32(
+                    val.parse()
+                        .map_err(|_| E::custom("failed to parse integer"))?,
+                )
             }
         }
 
@@ -151,6 +155,11 @@ impl Studieresultat {
             }
         }
         None
+    }
+    fn get_betygsskala(&self) -> Option<BetygsskalaID> {
+        self.Rapporteringskontext
+            .as_ref()
+            .and_then(|rk| rk.BetygsskalaID)
     }
 }
 
@@ -284,6 +293,7 @@ struct Resultat {
 struct Ladok {
     server: String,
     client: Client,
+    betygskalor_cache: BTreeMap<BetygsskalaID, Betygskala>, // = BTreeMap::new();
 }
 
 impl Ladok {
@@ -292,14 +302,29 @@ impl Ladok {
         Ok(Ladok {
             server: server.to_string(),
             client: Client::builder().identity(key).build()?,
+            betygskalor_cache: BTreeMap::new(),
         })
     }
 
-    fn get_betygskala(&self, id: u32) -> Result<Betygskala, Error> {
+    fn get_betygskala(&self, id: BetygsskalaID) -> Result<Betygskala, Error> {
         do_json_or_err(self.client.get(&format!(
             "https://{}/resultat/grunddata/betygsskala/{}",
-            self.server, id
+            self.server, id.0
         )))
+    }
+
+    fn get_grade(&mut self, betygskala: BetygsskalaID, grade: &str) -> Result<Betygsgrad, Error> {
+        let betygskala = if let Some(betygskala) = self.betygskalor_cache.get(&betygskala) {
+            betygskala
+        } else {
+            let loaded = self.get_betygskala(betygskala)?;
+            self.betygskalor_cache.insert(betygskala, loaded);
+            &self.betygskalor_cache[&betygskala]
+        };
+        betygskala
+            .get(&grade)
+            .cloned()
+            .ok_or_else(|| format_err!("Grade {:?} not in {}", grade, betygskala.Kod))
     }
 
     fn sok_studieresultat(
@@ -395,10 +420,7 @@ fn read_result_to_report() -> Vec<(String, String)> {
 }
 
 fn main() -> Result<(), Error> {
-    let ladok = Ladok::new("api.test.ladok.se", "../cert/rr.p12".as_ref())?;
-
-    // TODO Use the correct betygskala for each reported result.
-    let betygskala = ladok.get_betygskala(131_657)?;
+    let mut ladok = Ladok::new("api.test.ladok.se", "../cert/rr.p12".as_ref())?;
 
     // Kursen SE1010
     let _kursinstans = "7e0c378c-73d8-11e8-afa7-8e408e694e54";
@@ -415,18 +437,22 @@ fn main() -> Result<(), Error> {
     let mut update_queue = vec![];
 
     for (student, grade) in read_result_to_report() {
-        let grade = betygskala
-            .get(&grade)
-            .ok_or_else(|| format_err!("Grade {:?} not in {}", grade, betygskala.Kod))?;
         let one = dbg!(resultat.find_student(&student))
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
 
+        // TODO: Get exam_date from canvas.
         let exam_date = NaiveDate::from_ymd(2019, 4, 16);
+
+        let betygskala = one
+            .get_betygsskala()
+            .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
+        let grade = ladok.get_grade(betygskala, &grade)?;
+
         if let Some(underlag) = one.get_arbetsunderlag(momentid_1) {
             update_queue.push(UppdateraResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
-                BetygsskalaID: betygskala.ID,
+                BetygsskalaID: betygskala,
                 Examinationsdatum: Some(exam_date),
                 ResultatUID: underlag.Uid.clone(),
                 SenasteResultatandring: underlag.SenasteResultatandring,
@@ -435,7 +461,7 @@ fn main() -> Result<(), Error> {
             create_queue.push(SkapaResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
-                BetygsskalaID: betygskala.ID,
+                BetygsskalaID: betygskala,
                 Examinationsdatum: Some(exam_date),
                 StudieresultatUID: one.Uid.clone(),
                 UtbildningsinstansUID: Some(momentid_1.into()),
