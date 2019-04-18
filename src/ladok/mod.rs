@@ -49,7 +49,7 @@ impl Ladok {
     pub fn sok_studieresultat(
         &self,
         kurstillf: String,
-        moment: String,
+        moment: &str,
     ) -> Result<SokresultatStudieresultatResultat, Error> {
         let url = format!(
             "https://{}/resultat/studieresultat/rapportera/utbildningsinstans/{}/sok",
@@ -59,7 +59,7 @@ impl Ladok {
             KurstillfallenUID: vec![kurstillf],
             Page: 1,
             Filtrering: vec!["OBEHANDLADE".into(), "UTKAST".into()],
-            UtbildningsinstansUID: Some(moment),
+            UtbildningsinstansUID: Some(moment.to_string()),
             OrderBy: vec![
                 "EFTERNAMN_ASC".into(),
                 "FORNAMN_ASC".into(),

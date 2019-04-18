@@ -1,11 +1,14 @@
 use chrono::Local;
 use failure::{format_err, Error};
 use reqwest::Identity;
+use std::env::var;
 use std::fs::File;
-use std::io::{self, BufRead, Read};
+use std::io::Read;
 use std::path::Path;
 
+mod canvas;
 mod ladok;
+use canvas::Canvas;
 use ladok::types::{SkapaResultat, UppdateraResultat};
 use ladok::Ladok;
 
@@ -17,39 +20,33 @@ fn read_cert<P: AsRef<Path>>(file: P) -> Result<Identity, Error> {
     Ok(id)
 }
 
-/// Get a studnet id and a grade from stdin
-///
-/// This emulates the part that gets things from canvas, it could just
-/// return some hardcoded values, but I don't want to write a student
-/// id in the source code.
-fn read_result_to_report() -> Vec<(String, String)> {
-    io::stdin()
-        .lock()
-        .lines()
-        .map(|line| {
-            let line = line.unwrap();
-            let mut words = line.split_whitespace();
-            (
-                words.next().unwrap_or("").into(),
-                words.next().unwrap_or("").into(),
-            )
-        })
-        .collect()
-}
-
 fn main() -> Result<(), Error> {
+    let sis_courseroom = "LT1016VT191";
+
+    let canvas = Canvas::new("kth.test.instructure.com", &var("CANVAS_API_KEY")?)?;
+    let kurstillf = canvas
+        .get_course(sis_courseroom)?
+        .integration_id
+        .ok_or_else(|| format_err!("Canvas room {} is lacking integration id", sis_courseroom))?;
+    let assignment = canvas
+        .get_assignments(sis_courseroom)?
+        .into_iter()
+        .find(|a| a.integration_id.is_some())
+        .unwrap();
+    let moment_id = assignment.integration_id.as_ref().unwrap();
+    eprintln!(
+        "Should report on moment {} on course {}",
+        moment_id, kurstillf
+    );
+    let submissions = canvas
+        .get_submissions(sis_courseroom)?
+        .into_iter()
+        .filter(|s| s.assignment_id == Some(assignment.id))
+        .collect::<Vec<_>>();
+
     let mut ladok = Ladok::new("api.test.ladok.se", read_cert("../cert/rr.p12")?)?;
 
-    // Kursen SE1010
-    let _kursinstans = "7e0c378c-73d8-11e8-afa7-8e408e694e54";
-    // SE1010 HT18 50110
-    let kurstillf = "c601ee70-73da-11e8-b4e0-063f9afb40e3";
-    // Diagnostisk uppgift på ovanstående instans
-    let momentid_1 = "7ddee586-73d8-11e8-b4e0-063f9afb40e3";
-    // TEN1 på ovanstående instans
-    let _momentid_2 = "7dca24f2-73d8-11e8-b4e0-063f9afb40e3";
-
-    let resultat = ladok.sok_studieresultat(kurstillf.into(), momentid_1.into())?;
+    let resultat = ladok.sok_studieresultat(kurstillf, &moment_id)?;
 
     let mut create_queue = vec![];
     let mut update_queue = vec![];
@@ -58,7 +55,8 @@ fn main() -> Result<(), Error> {
     // the current date when making a change.
     let exam_date = Local::now().naive_local().date();
 
-    for (student, grade) in read_result_to_report() {
+    for submission in submissions {
+        let student = dbg!(canvas.get_user_uid(submission.user_id.unwrap())?);
         let one = resultat
             .find_student(&student)
             .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
@@ -66,9 +64,9 @@ fn main() -> Result<(), Error> {
         let betygskala = one
             .get_betygsskala()
             .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
-        let grade = ladok.get_grade(betygskala, &grade)?;
+        let grade = ladok.get_grade(betygskala, &submission.grade.unwrap())?;
 
-        if let Some(underlag) = one.get_arbetsunderlag(momentid_1) {
+        if let Some(underlag) = one.get_arbetsunderlag(moment_id) {
             if underlag.Betygsgrad != Some(grade.ID) {
                 eprintln!(
                     "Updating grade from {:?} to {:?} for {:?}",
@@ -82,6 +80,8 @@ fn main() -> Result<(), Error> {
                     ResultatUID: underlag.Uid.clone(),
                     SenasteResultatandring: underlag.SenasteResultatandring,
                 });
+            } else {
+                eprintln!("Grade {:?} up to date for {:?}", grade, student);
             }
         } else {
             create_queue.push(SkapaResultat {
@@ -90,7 +90,7 @@ fn main() -> Result<(), Error> {
                 BetygsskalaID: betygskala,
                 Examinationsdatum: Some(exam_date),
                 StudieresultatUID: one.Uid.clone(),
-                UtbildningsinstansUID: Some(momentid_1.into()),
+                UtbildningsinstansUID: Some(moment_id.clone()),
             });
         }
     }
