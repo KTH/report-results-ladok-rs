@@ -268,7 +268,7 @@ pub struct Resultat {
     pub Betygsgrad: Option<BetygsgradID>,
     // <rr:Betygsgradsobjekt> rr:Betygsgrad </rr:Betygsgradsobjekt> [0..1]
     BetygsskalaID: Option<BetygsskalaID>,
-    Examinationsdatum: Option<NaiveDate>,
+    pub Examinationsdatum: Option<NaiveDate>,
     //<rr:ExamineradOmfattning> xs:decimal </rr:ExamineradOmfattning> [0..1]
     //<rr:ForbereddForBorttag> xs:boolean </rr:ForbereddForBorttag> [0..1]
     //<rr:HanvisningTillBeslutshandling> ... </rr:HanvisningTillBeslutshandling> [0..1]

@@ -1,4 +1,3 @@
-use chrono::Local;
 use failure::{format_err, Error};
 use reqwest::Identity;
 use std::env::var;
@@ -51,10 +50,6 @@ fn main() -> Result<(), Error> {
     let mut create_queue = vec![];
     let mut update_queue = vec![];
 
-    // Note: If possible, use a date from canvas.  Otherwise, just set
-    // the current date when making a change.
-    let exam_date = Local::now().naive_local().date();
-
     for submission in submissions {
         let student = dbg!(canvas.get_user_uid(submission.user_id.unwrap())?);
         let one = resultat
@@ -66,8 +61,16 @@ fn main() -> Result<(), Error> {
             .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
         let grade = ladok.get_grade(betygskala, &submission.grade.unwrap())?;
 
+        let exam_date = submission
+            .graded_at
+            .ok_or_else(|| format_err!("Submission missing graded_at for student {}", student))?
+            .naive_local()
+            .date();
+
         if let Some(underlag) = one.get_arbetsunderlag(moment_id) {
-            if underlag.Betygsgrad != Some(grade.ID) {
+            if underlag.Betygsgrad != Some(grade.ID)
+                || underlag.Examinationsdatum != Some(exam_date)
+            {
                 eprintln!(
                     "Updating grade from {:?} to {:?} for {:?}",
                     underlag.Betygsgrad, grade, student
