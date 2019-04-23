@@ -20,11 +20,13 @@ fn read_cert<P: AsRef<Path>>(file: P) -> Result<Identity, Error> {
 }
 
 fn main() -> Result<(), Error> {
-    let sis_courseroom = "LT1016VT191";
-
     let canvas = Canvas::new("kth.test.instructure.com", &var("CANVAS_API_KEY")?)?;
     let mut ladok = Ladok::new("api.test.ladok.se", read_cert("../cert/rr.p12")?)?;
 
+    do_report(&canvas, &mut ladok, "LT1016VT191")
+}
+
+fn do_report(canvas: &Canvas, ladok: &mut Ladok, sis_courseroom: &str) -> Result<(), Error> {
     let kurstillf = canvas
         .get_course(sis_courseroom)?
         .integration_id
@@ -52,9 +54,7 @@ fn main() -> Result<(), Error> {
             .filter(|s| s.assignment_id == Some(assignment.id))
         {
             match dbg!(canvas.get_user_uid(dbg!(&submission.user_id).unwrap())).and_then(
-                |student| {
-                    prepare_ladok_change(&mut ladok, student, &resultat, moment_id, submission)
-                },
+                |student| prepare_ladok_change(ladok, student, &resultat, moment_id, submission),
             ) {
                 Ok(ChangeToLadok::Update(data)) => update_queue.push(data),
                 Ok(ChangeToLadok::Create(data)) => create_queue.push(data),
