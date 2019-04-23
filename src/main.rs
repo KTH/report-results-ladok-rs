@@ -7,8 +7,8 @@ use std::path::Path;
 
 mod canvas;
 mod ladok;
-use canvas::Canvas;
-use ladok::types::{SkapaResultat, UppdateraResultat};
+use canvas::{Canvas, Submission};
+use ladok::types::{SkapaResultat, SokresultatStudieresultatResultat, UppdateraResultat};
 use ladok::Ladok;
 
 fn read_cert<P: AsRef<Path>>(file: P) -> Result<Identity, Error> {
@@ -51,50 +51,14 @@ fn main() -> Result<(), Error> {
     let mut update_queue = vec![];
 
     for submission in submissions {
-        let student = dbg!(canvas.get_user_uid(submission.user_id.unwrap())?);
-        let one = resultat
-            .find_student(&student)
-            .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
-
-        let betygskala = one
-            .get_betygsskala()
-            .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
-        let grade = ladok.get_grade(betygskala, &submission.grade.unwrap())?;
-
-        let exam_date = submission
-            .graded_at
-            .ok_or_else(|| format_err!("Submission missing graded_at for student {}", student))?
-            .naive_local()
-            .date();
-
-        if let Some(underlag) = one.get_arbetsunderlag(moment_id) {
-            if underlag.Betygsgrad != Some(grade.ID)
-                || underlag.Examinationsdatum != Some(exam_date)
-            {
-                eprintln!(
-                    "Updating grade from {:?} to {:?} for {:?}",
-                    underlag.Betygsgrad, grade, student
-                );
-                update_queue.push(UppdateraResultat {
-                    Uid: one.Uid.clone(),
-                    Betygsgrad: Some(grade.ID),
-                    BetygsskalaID: betygskala,
-                    Examinationsdatum: Some(exam_date),
-                    ResultatUID: underlag.Uid.clone(),
-                    SenasteResultatandring: underlag.SenasteResultatandring,
-                });
-            } else {
-                eprintln!("Grade {:?} up to date for {:?}", grade, student);
-            }
-        } else {
-            create_queue.push(SkapaResultat {
-                Uid: one.Uid.clone(),
-                Betygsgrad: Some(grade.ID),
-                BetygsskalaID: betygskala,
-                Examinationsdatum: Some(exam_date),
-                StudieresultatUID: one.Uid.clone(),
-                UtbildningsinstansUID: Some(moment_id.clone()),
-            });
+        match canvas
+            .get_user_uid(dbg!(&submission).user_id.unwrap())
+            .and_then(|student| prepare_ladok_change(&mut ladok, student, &resultat, moment_id, submission))
+        {
+            Ok(ChangeToLadok::Update(data)) => update_queue.push(data),
+            Ok(ChangeToLadok::Create(data)) => create_queue.push(data),
+            Ok(ChangeToLadok::NoChange) => (),
+            Err(e) => eprintln!("Error {}", e),
         }
     }
     eprintln!(
@@ -112,4 +76,62 @@ fn main() -> Result<(), Error> {
     }
     eprintln!("Ok.  Done.");
     Ok(())
+}
+
+fn prepare_ladok_change(
+    ladok: &mut Ladok,
+    student: String,
+    resultat: &SokresultatStudieresultatResultat,
+    moment_id: &str,
+    submission: Submission,
+) -> Result<ChangeToLadok, Error> {
+    let one = resultat
+        .find_student(&student)
+        .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
+
+    let betygskala = one
+        .get_betygsskala()
+        .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
+    let grade = ladok.get_grade(betygskala, &submission.grade.unwrap())?;
+
+    let exam_date = submission
+        .graded_at
+        .ok_or_else(|| format_err!("Submission missing graded_at for student {}", student))?
+        .naive_local()
+        .date();
+
+    Ok(if let Some(underlag) = one.get_arbetsunderlag(moment_id) {
+        if underlag.Betygsgrad != Some(grade.ID) || underlag.Examinationsdatum != Some(exam_date) {
+            eprintln!(
+                "Updating grade from {:?} to {:?} for {:?}",
+                underlag.Betygsgrad, grade, student
+            );
+            ChangeToLadok::Update(UppdateraResultat {
+                Uid: one.Uid.clone(),
+                Betygsgrad: Some(grade.ID),
+                BetygsskalaID: betygskala,
+                Examinationsdatum: Some(exam_date),
+                ResultatUID: underlag.Uid.clone(),
+                SenasteResultatandring: underlag.SenasteResultatandring,
+            })
+        } else {
+            eprintln!("Grade {:?} up to date for {:?}", grade, student);
+            ChangeToLadok::NoChange
+        }
+    } else {
+        ChangeToLadok::Create(SkapaResultat {
+            Uid: one.Uid.clone(),
+            Betygsgrad: Some(grade.ID),
+            BetygsskalaID: betygskala,
+            Examinationsdatum: Some(exam_date),
+            StudieresultatUID: one.Uid.clone(),
+            UtbildningsinstansUID: Some(moment_id.to_string()),
+        })
+    })
+}
+
+enum ChangeToLadok {
+    Update(UppdateraResultat),
+    Create(SkapaResultat),
+    NoChange,
 }
