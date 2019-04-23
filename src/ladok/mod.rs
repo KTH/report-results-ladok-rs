@@ -48,7 +48,7 @@ impl Ladok {
 
     pub fn sok_studieresultat(
         &self,
-        kurstillf: String,
+        kurstillf: &str,
         moment: &str,
     ) -> Result<SokresultatStudieresultatResultat, Error> {
         let url = format!(
@@ -56,7 +56,7 @@ impl Ladok {
             self.server, moment,
         );
         let mut data = StudieresultatForRapporteringSokVarden {
-            KurstillfallenUID: vec![kurstillf],
+            KurstillfallenUID: vec![kurstillf.to_string()],
             Page: 1,
             Filtrering: vec!["OBEHANDLADE".into(), "UTKAST".into()],
             UtbildningsinstansUID: Some(moment.to_string()),

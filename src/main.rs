@@ -23,56 +23,58 @@ fn main() -> Result<(), Error> {
     let sis_courseroom = "LT1016VT191";
 
     let canvas = Canvas::new("kth.test.instructure.com", &var("CANVAS_API_KEY")?)?;
+    let mut ladok = Ladok::new("api.test.ladok.se", read_cert("../cert/rr.p12")?)?;
+
     let kurstillf = canvas
         .get_course(sis_courseroom)?
         .integration_id
         .ok_or_else(|| format_err!("Canvas room {} is lacking integration id", sis_courseroom))?;
-    let assignment = canvas
+
+    let submissions = canvas.get_submissions(sis_courseroom)?;
+
+    for assignment in canvas
         .get_assignments(sis_courseroom)?
         .into_iter()
-        .find(|a| a.integration_id.is_some())
-        .unwrap();
-    let moment_id = assignment.integration_id.as_ref().unwrap();
-    eprintln!(
-        "Should report on moment {} on course {}",
-        moment_id, kurstillf
-    );
-    let submissions = canvas
-        .get_submissions(sis_courseroom)?
-        .into_iter()
-        .filter(|s| s.assignment_id == Some(assignment.id))
-        .collect::<Vec<_>>();
+        .filter(|a| a.integration_id.is_some())
+    {
+        let moment_id = assignment.integration_id.as_ref().unwrap();
+        eprintln!(
+            "Should report on moment {} on course {}",
+            moment_id, kurstillf
+        );
+        let resultat = ladok.sok_studieresultat(&kurstillf, &moment_id)?;
 
-    let mut ladok = Ladok::new("api.test.ladok.se", read_cert("../cert/rr.p12")?)?;
+        let mut create_queue = vec![];
+        let mut update_queue = vec![];
 
-    let resultat = ladok.sok_studieresultat(kurstillf, &moment_id)?;
-
-    let mut create_queue = vec![];
-    let mut update_queue = vec![];
-
-    for submission in submissions {
-        match canvas
-            .get_user_uid(dbg!(&submission).user_id.unwrap())
-            .and_then(|student| prepare_ladok_change(&mut ladok, student, &resultat, moment_id, submission))
+        for submission in submissions
+            .iter()
+            .filter(|s| s.assignment_id == Some(assignment.id))
         {
-            Ok(ChangeToLadok::Update(data)) => update_queue.push(data),
-            Ok(ChangeToLadok::Create(data)) => create_queue.push(data),
-            Ok(ChangeToLadok::NoChange) => (),
-            Err(e) => eprintln!("Error {}", e),
+            match dbg!(canvas.get_user_uid(dbg!(&submission.user_id).unwrap())).and_then(
+                |student| {
+                    prepare_ladok_change(&mut ladok, student, &resultat, moment_id, submission)
+                },
+            ) {
+                Ok(ChangeToLadok::Update(data)) => update_queue.push(data),
+                Ok(ChangeToLadok::Create(data)) => create_queue.push(data),
+                Ok(ChangeToLadok::NoChange) => (),
+                Err(e) => eprintln!("Error {}", e),
+            }
         }
-    }
-    eprintln!(
-        "There are {} results to create and {} to update",
-        create_queue.len(),
-        update_queue.len(),
-    );
-    if !create_queue.is_empty() {
-        let result = ladok.skapa_studieresultat(create_queue)?;
-        eprintln!("After create: {} results", result.len())
-    }
-    if !update_queue.is_empty() {
-        let result = ladok.uppdatera_studieresultat(update_queue)?;
-        eprintln!("After update: {} results", result.len())
+        eprintln!(
+            "There are {} results to create and {} to update",
+            create_queue.len(),
+            update_queue.len(),
+        );
+        if !create_queue.is_empty() {
+            let result = ladok.skapa_studieresultat(create_queue)?;
+            eprintln!("After create: {} results", result.len())
+        }
+        if !update_queue.is_empty() {
+            let result = ladok.uppdatera_studieresultat(update_queue)?;
+            eprintln!("After update: {} results", result.len())
+        }
     }
     eprintln!("Ok.  Done.");
     Ok(())
@@ -83,7 +85,7 @@ fn prepare_ladok_change(
     student: String,
     resultat: &SokresultatStudieresultatResultat,
     moment_id: &str,
-    submission: Submission,
+    submission: &Submission,
 ) -> Result<ChangeToLadok, Error> {
     let one = resultat
         .find_student(&student)
@@ -92,7 +94,7 @@ fn prepare_ladok_change(
     let betygskala = one
         .get_betygsskala()
         .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
-    let grade = ladok.get_grade(betygskala, &submission.grade.unwrap())?;
+    let grade = ladok.get_grade(betygskala, &submission.grade.as_ref().unwrap())?;
 
     let exam_date = submission
         .graded_at
