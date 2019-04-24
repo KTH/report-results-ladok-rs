@@ -61,7 +61,10 @@ fn main() -> Result<(), Error> {
         );
 
     let addr = var("LISTEN");
-    let addr = addr.as_ref().map(AsRef::as_ref).unwrap_or("127.0.0.1:3030")
+    let addr = addr
+        .as_ref()
+        .map(AsRef::as_ref)
+        .unwrap_or("127.0.0.1:3030")
         .parse::<SocketAddr>()?;
     warp::serve(routes).run(addr);
     Ok(())
@@ -145,15 +148,19 @@ fn monitor() -> impl Reply {
 fn export_step_1(ctx: Arc<ServerContext>, b: ExportPostData) -> impl Reply {
     // const correlationId = req.id;
     eprintln!("Export request posted: {:?}", b);
-    // console.log(`The user ${b.lis_person_sourcedid}, ${b.custom_canvas_user_login_id}, is exporting the course ${b.context_label} with id ${b.custom_canvas_course_id}`)
     let sis_course_id = b.lis_course_offering_sourcedid;
     let canvas_course_id = b.custom_canvas_course_id;
     let full_url = var2("PROXY_BASE").unwrap(); // _or_else(|| format!("{}://{}", req.protocol, req.get("host"))) + req.originalUrl;
     let next_url = format!(
-        "{}2?sisCourseId={}&canvasCourseId={}", // correlationId={}
+        "{}2?{}",
         full_url,
-        sis_course_id,
-        canvas_course_id, // FIXME: urlencode
+        serde_urlencoded::to_string(QueryArgs {
+            canvasCourseId: Some(canvas_course_id),
+            error: None,
+            code: b.code,
+            sisCourseId: sis_course_id,
+        })
+        .unwrap(),
     );
     info!(
         "Tell auth to redirect back to {} using canvas client id {}",
@@ -171,9 +178,10 @@ fn export_step_1(ctx: Arc<ServerContext>, b: ExportPostData) -> impl Reply {
 struct ExportPostData {
     lis_course_offering_sourcedid: String,
     custom_canvas_course_id: String,
+    code: Option<String>,
 }
 
-fn export_step_2(_ctx: Arc<ServerContext>, query: Step2QueryArgs) -> impl Reply {
+fn export_step_2(_ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     if query.canvasCourseId.is_none() {
         warn!("/export2 accessed with missing parameters. Ignoring the request...");
         return bad_request("The URL you are accessing needs extra parameters, please check it. If you came here by a link, inform us about this error.");
@@ -196,7 +204,7 @@ fn export_step_2(_ctx: Arc<ServerContext>, query: Step2QueryArgs) -> impl Reply 
     Response::builder()
         .body(format!("<link rel='stylesheet' href='/api/lms-export-results/kth-style/css/kth-bootstrap.css'>\
                        \n<div>Collecting all the data...</div>\
-                       \n<script>document.location='exportResults3?{}'</script>\n",
+                       \n<script>document.location='export3?{}'</script>\n",
                       serde_urlencoded::to_string(query).unwrap()).into_bytes()).unwrap()
 }
 
@@ -231,22 +239,14 @@ fn access_denied(message: &str) -> Response<Vec<u8>> {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[allow(non_snake_case)]
-struct Step2QueryArgs {
+struct QueryArgs {
     canvasCourseId: Option<String>,
     error: Option<String>,
     code: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[allow(non_snake_case)]
-struct Step3QueryArgs {
-    canvasCourseId: Option<String>,
-    //error: Option<String>,
-    code: String,
     sisCourseId: String,
 }
 
-fn export_step_3(ctx: Arc<ServerContext>, query: Step3QueryArgs) -> impl Reply {
+fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     info!(
         "Should export for {:?} / {:?}",
         query.sisCourseId, query.canvasCourseId,
@@ -254,7 +254,7 @@ fn export_step_3(ctx: Arc<ServerContext>, query: Step3QueryArgs) -> impl Reply {
 
     let canvas = match ctx.auth_canvas_client(
         "https://app.kth.se/fixme/FIXME", // req.protocol + "://" + req.get("host") + req.originalUrl,
-        &query.code,
+        query.code.as_ref().unwrap(),
     ) {
         Ok(client) => client,
         Err(e) => {
