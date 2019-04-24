@@ -1,3 +1,4 @@
+use dotenv::dotenv;
 use failure::{format_err, Error};
 use log::{error, info, warn};
 use reqwest::{Client, Identity};
@@ -5,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::env::var;
 use std::fs::File;
 use std::io::Read;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use warp::filters::BoxedFilter;
@@ -27,6 +29,8 @@ fn read_cert<P: AsRef<Path>>(file: P) -> Result<Identity, Error> {
 }
 
 fn main() -> Result<(), Error> {
+    let _ = dotenv();
+    env_logger::init();
     let context = Arc::new(ServerContext::from_env()?);
     let ctx: BoxedFilter<(Arc<ServerContext>,)> = warp::any()
         .and_then(move || Ok::<_, Error>(context.clone()).map_err(custom))
@@ -55,7 +59,11 @@ fn main() -> Result<(), Error> {
                     .and(query())
                     .map(export_step_3)),
         );
-    warp::serve(routes).run(([127, 0, 0, 1], 3030));
+
+    let addr = var("LISTEN");
+    let addr = addr.as_ref().map(AsRef::as_ref).unwrap_or("127.0.0.1:3030")
+        .parse::<SocketAddr>()?;
+    warp::serve(routes).run(addr);
     Ok(())
 }
 
@@ -68,9 +76,9 @@ struct ServerContext {
 impl ServerContext {
     fn from_env() -> Result<ServerContext, Error> {
         Ok(ServerContext {
-            canvas_host: var("CANVAS_HOST")?,
-            canvas_client_id: var("CANVAS_CLIENT_ID")?,
-            canvas_client_secret: var("CANVAS_CLIENT_SECRET")?,
+            canvas_host: var2("CANVAS_HOST")?,
+            canvas_client_id: var2("CANVAS_CLIENT_ID")?,
+            canvas_client_secret: var2("CANVAS_CLIENT_SECRET")?,
         })
     }
     fn auth_canvas_client(&self, redirect_uri: &str, code: &str) -> Result<Canvas, Error> {
@@ -117,6 +125,10 @@ impl ServerContext {
     }
 }
 
+fn var2(name: &str) -> Result<String, Error> {
+    var(name).map_err(|e| format_err!("{}: {}", name, e))
+}
+
 fn about() -> impl Reply {
     format!("{} {}\n", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
 }
@@ -136,7 +148,7 @@ fn export_step_1(ctx: Arc<ServerContext>, b: ExportPostData) -> impl Reply {
     // console.log(`The user ${b.lis_person_sourcedid}, ${b.custom_canvas_user_login_id}, is exporting the course ${b.context_label} with id ${b.custom_canvas_course_id}`)
     let sis_course_id = b.lis_course_offering_sourcedid;
     let canvas_course_id = b.custom_canvas_course_id;
-    let full_url = var("PROXY_BASE").unwrap(); // _or_else(|| format!("{}://{}", req.protocol, req.get("host"))) + req.originalUrl;
+    let full_url = var2("PROXY_BASE").unwrap(); // _or_else(|| format!("{}://{}", req.protocol, req.get("host"))) + req.originalUrl;
     let next_url = format!(
         "{}2?sisCourseId={}&canvasCourseId={}", // correlationId={}
         full_url,
