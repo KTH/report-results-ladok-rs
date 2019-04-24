@@ -74,6 +74,7 @@ struct ServerContext {
     canvas_host: String, // hostname
     canvas_client_id: String,
     canvas_client_secret: String,
+    proxy_base: String,
 }
 
 impl ServerContext {
@@ -82,9 +83,10 @@ impl ServerContext {
             canvas_host: var2("CANVAS_HOST")?,
             canvas_client_id: var2("CANVAS_CLIENT_ID")?,
             canvas_client_secret: var2("CANVAS_CLIENT_SECRET")?,
+            proxy_base: var2("PROXY_BASE")?,
         })
     }
-    fn auth_canvas_client(&self, redirect_uri: &str, code: &str) -> Result<Canvas, Error> {
+    fn auth_canvas_client(&self, code: &str) -> Result<Canvas, Error> {
         #[derive(Serialize)]
         struct OathRequest<'a> {
             grant_type: &'a str,
@@ -104,7 +106,7 @@ impl ServerContext {
                 grant_type: "authorization_code",
                 client_id: &self.canvas_client_id,
                 client_secret: &self.canvas_client_secret,
-                redirect_uri,
+                redirect_uri: &self.main_url(),
                 code,
             })
             .header("accept", "application/json")
@@ -125,6 +127,9 @@ impl ServerContext {
             ])
             .unwrap(),
         )
+    }
+    fn main_url(&self) -> String {
+        format!("{}/api/{}", self.proxy_base, env!("CARGO_PKG_NAME"))
     }
 }
 
@@ -252,10 +257,7 @@ fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
         query.sisCourseId, query.canvasCourseId,
     );
 
-    let canvas = match ctx.auth_canvas_client(
-        "https://app.kth.se/fixme/FIXME", // req.protocol + "://" + req.get("host") + req.originalUrl,
-        query.code.as_ref().unwrap(),
-    ) {
+    let canvas = match ctx.auth_canvas_client(query.code.as_ref().unwrap()) {
         Ok(client) => client,
         Err(e) => {
             warn!("The access token cannot be retrieved from Canvas: {}", e);
