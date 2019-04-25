@@ -4,10 +4,7 @@ use log::{error, info, warn};
 use reqwest::{Client, Identity};
 use serde::{Deserialize, Serialize};
 use std::env::var;
-use std::fs::File;
-use std::io::Read;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
 use warp::filters::BoxedFilter;
 use warp::http::{header, Response, StatusCode};
@@ -19,14 +16,6 @@ mod ladok;
 use canvas::{Canvas, Submission};
 use ladok::types::{SkapaResultat, SokresultatStudieresultatResultat, UppdateraResultat};
 use ladok::Ladok;
-
-fn read_cert<P: AsRef<Path>>(file: P) -> Result<Identity, Error> {
-    let mut f = File::open(file)?;
-    let mut data = vec![];
-    f.read_to_end(&mut data)?;
-    let id = Identity::from_pkcs12_der(&data, "")?;
-    Ok(id)
-}
 
 fn main() -> Result<(), Error> {
     let _ = dotenv();
@@ -74,6 +63,9 @@ struct ServerContext {
     canvas_host: String, // hostname
     canvas_client_id: String,
     canvas_client_secret: String,
+    ladok_base_url: String,
+    ladok_key_data: Vec<u8>,
+    ladok_key_pass: String,
     proxy_base: String,
 }
 
@@ -83,6 +75,9 @@ impl ServerContext {
             canvas_host: var2("CANVAS_HOST")?,
             canvas_client_id: var2("CANVAS_CLIENT_ID")?,
             canvas_client_secret: var2("CANVAS_CLIENT_SECRET")?,
+            ladok_base_url: var2("LADOK_API_BASEURL")?,
+            ladok_key_data: base64::decode(&var2("LADOK_API_PFX_BASE64")?)?,
+            ladok_key_pass: var2("LADOK_API_PFX_PASSPHRASE")?,
             proxy_base: var2("PROXY_BASE")?,
         })
     }
@@ -130,6 +125,12 @@ impl ServerContext {
     }
     fn main_url(&self) -> String {
         format!("{}/api/{}", self.proxy_base, env!("CARGO_PKG_NAME"))
+    }
+    fn ladok_client(&self) -> Result<Ladok, Error> {
+        Ladok::new(
+            &self.ladok_base_url,
+            Identity::from_pkcs12_der(&self.ladok_key_data, &self.ladok_key_pass)?,
+        )
     }
 }
 
@@ -266,7 +267,7 @@ fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     };
 
     let result = (|| {
-        let mut ladok = Ladok::new("api.test.ladok.se", read_cert("../cert/rr.p12")?)?;
+        let mut ladok = ctx.ladok_client()?;
 
         do_report(&canvas, &mut ladok, &query.sisCourseId)
     })()
