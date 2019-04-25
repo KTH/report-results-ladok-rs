@@ -30,12 +30,13 @@ fn main() -> Result<(), Error> {
         .and(
             path("_about")
                 .and(get())
+                .and(ctx.clone())
                 .map(about)
                 .or(path("_monitor").and(get()).map(monitor))
                 .or(path("export")
                     .and(post())
                     .and(ctx.clone())
-                    .and(body::json())
+                    .and(body::form())
                     .map(export_step_1))
                 .or(path("export2")
                     .and(get())
@@ -90,11 +91,20 @@ impl ServerContext {
             redirect_uri: &'a str,
             code: &'a str,
         };
+        #[derive(Debug, Deserialize)]
+        struct CanvasUser {
+            id: u32,
+            name: String,
+            global_id: String,
+            effective_locale: Option<String>,
+        }
         #[derive(Deserialize)]
         struct OathResponse {
-            acces_token: String,
+            access_token: String,
+            user: CanvasUser,
+            // ignoring token_type, refresh_token and expires_in for now.
         }
-        let access_token = Client::builder()
+        let oauth = Client::builder()
             .build()?
             .post(&format!("https://{}/login/oauth2/token", self.canvas_host))
             .json(&OathRequest {
@@ -107,9 +117,9 @@ impl ServerContext {
             .header("accept", "application/json")
             .send()?
             .error_for_status()?
-            .json::<OathResponse>()?
-            .acces_token;
-        Canvas::new(&self.canvas_host, &access_token)
+            .json::<OathResponse>()?;
+        info!("Got access token for {:?}", oauth.user);
+        Canvas::new(&self.canvas_host, &oauth.access_token)
     }
     fn get_oath_url(&self, next_url: &str) -> String {
         format!(
@@ -124,7 +134,7 @@ impl ServerContext {
         )
     }
     fn main_url(&self) -> String {
-        format!("{}/api/{}", self.proxy_base, env!("CARGO_PKG_NAME"))
+        format!("{}/api/{}/export", self.proxy_base, env!("CARGO_PKG_NAME"))
     }
     fn ladok_client(&self) -> Result<Ladok, Error> {
         Ladok::new(
@@ -138,8 +148,14 @@ fn var2(name: &str) -> Result<String, Error> {
     var(name).map_err(|e| format_err!("{}: {}", name, e))
 }
 
-fn about() -> impl Reply {
-    format!("{} {}\n", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+fn about(ctx: Arc<ServerContext>) -> impl Reply {
+    format!(
+        "{} {}\n\nCanvas base: https://{}/\nLadok base: {}/\n",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        ctx.canvas_host,
+        ctx.ladok_base_url,
+    )
 }
 
 fn monitor() -> impl Reply {
@@ -156,10 +172,9 @@ fn export_step_1(ctx: Arc<ServerContext>, b: ExportPostData) -> impl Reply {
     eprintln!("Export request posted: {:?}", b);
     let sis_course_id = b.lis_course_offering_sourcedid;
     let canvas_course_id = b.custom_canvas_course_id;
-    let full_url = var2("PROXY_BASE").unwrap(); // _or_else(|| format!("{}://{}", req.protocol, req.get("host"))) + req.originalUrl;
     let next_url = format!(
         "{}2?{}",
-        full_url,
+        ctx.main_url(),
         serde_urlencoded::to_string(QueryArgs {
             canvasCourseId: Some(canvas_course_id),
             error: None,
@@ -360,7 +375,14 @@ fn prepare_ladok_change(
     let betygskala = one
         .get_betygsskala()
         .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
-    let grade = ladok.get_grade(betygskala, &submission.grade.as_ref().unwrap())?;
+    let grade = match &submission.grade {
+        Some(ref grade) => grade,
+        None => {
+            info!("No grade for student {} in {:?}", student, submission);
+            return Ok(ChangeToLadok::NoChange);
+        }
+    };
+    let grade = ladok.get_grade(betygskala, grade)?;
 
     let exam_date = submission
         .graded_at
