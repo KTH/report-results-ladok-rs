@@ -23,7 +23,7 @@ impl Ladok {
 
     fn get_betygskala(&self, id: BetygsskalaID) -> Result<Betygskala, Error> {
         do_json_or_err(self.client.get(&format!(
-            "https://{}/resultat/grunddata/betygsskala/{}",
+            "{}/resultat/grunddata/betygsskala/{}",
             self.server, id
         )))
     }
@@ -52,7 +52,7 @@ impl Ladok {
         moment: &str,
     ) -> Result<SokresultatStudieresultatResultat, Error> {
         let url = format!(
-            "https://{}/resultat/studieresultat/rapportera/utbildningsinstans/{}/sok",
+            "{}/resultat/studieresultat/rapportera/utbildningsinstans/{}/sok",
             self.server, moment,
         );
         let mut data = StudieresultatForRapporteringSokVarden {
@@ -87,7 +87,7 @@ impl Ladok {
     }
 
     pub fn skapa_studieresultat(&self, data: Vec<SkapaResultat>) -> Result<Vec<Resultat>, Error> {
-        let url = format!("https://{}/resultat/studieresultat/skapa", self.server);
+        let url = format!("{}/resultat/studieresultat/skapa", self.server);
         Ok(
             do_json_or_err::<ResultatLista>(self.client.post(&url).json(&SkapaFlera {
                 LarosateID: LarosateID::KTH,
@@ -101,7 +101,7 @@ impl Ladok {
         &self,
         data: Vec<UppdateraResultat>,
     ) -> Result<Vec<Resultat>, Error> {
-        let url = format!("https://{}/resultat/studieresultat/uppdatera", self.server);
+        let url = format!("{}/resultat/studieresultat/uppdatera", self.server);
         Ok(
             do_json_or_err::<ResultatLista>(self.client.put(&url).json(&UppdateraFlera {
                 LarosateID: LarosateID::KTH,
