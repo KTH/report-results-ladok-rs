@@ -1,0 +1,9 @@
+@use super::page;
+
+@(course: &str, url: &str)
+
+@:page("Collecting data ...", {
+<h1>Collecting data ...</h1>
+<div>Collecting all the data for @course ...</div>
+<script>document.location='@Html(url)'</script>
+})

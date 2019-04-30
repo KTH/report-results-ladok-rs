@@ -1,0 +1,9 @@
+@use super::page;
+@(canvas_host: &str, ladok_base: &str)
+
+@:page(env!("CARGO_PKG_NAME"), {
+<h1>@env!("CARGO_PKG_NAME")-@env!("CARGO_PKG_VERSION")</h1>
+
+<p>Canvas base: https://@canvas_host/</p>
+<p>Ladok base: @ladok_base/</p>
+})

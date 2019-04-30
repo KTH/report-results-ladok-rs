@@ -7,16 +7,18 @@ use std::collections::BTreeMap;
 use std::env::var;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use warp::filters::path::Tail;
 use warp::filters::BoxedFilter;
 use warp::http::{header, Response, StatusCode};
 use warp::reject::custom;
-use warp::{body, get2 as get, path, post2 as post, query, Filter, Reply};
+use warp::{body, get2 as get, path, post2 as post, query, Filter, Rejection, Reply};
 
 mod canvas;
 mod ladok;
 use canvas::{Canvas, Submission};
 use ladok::types::{SkapaResultat, SokresultatStudieresultatResultat, UppdateraResultat};
 use ladok::Ladok;
+use templates::RenderRucte;
 
 fn main() -> Result<(), Error> {
     let _ = dotenv();
@@ -34,6 +36,7 @@ fn main() -> Result<(), Error> {
                 .and(ctx.clone())
                 .map(about)
                 .or(path("_monitor").and(get()).map(monitor))
+                .or(path("s").and(path::tail()).and_then(static_file))
                 .or(path("export")
                     .and(post())
                     .and(ctx.clone())
@@ -59,6 +62,23 @@ fn main() -> Result<(), Error> {
         .parse::<SocketAddr>()?;
     warp::serve(routes).run(addr);
     Ok(())
+}
+
+/// Handler for static files.
+/// Create a response from the file data with a correct content type
+/// and a far expires header (or a 404 if the file does not exist).
+fn static_file(name: Tail) -> Result<impl Reply, Rejection> {
+    use templates::statics::StaticFile;
+    if let Some(data) = StaticFile::get(name.as_str()) {
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, data.mime.as_ref())
+            // TODO: .far_expires()
+            .body(data.content))
+    } else {
+        println!("Static file {:?} not found", name);
+        Err(warp::reject::not_found())
+    }
 }
 
 struct ServerContext {
@@ -150,13 +170,9 @@ fn var2(name: &str) -> Result<String, Error> {
 }
 
 fn about(ctx: Arc<ServerContext>) -> impl Reply {
-    format!(
-        "{} {}\n\nCanvas base: https://{}/\nLadok base: {}/\n",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        ctx.canvas_host,
-        ctx.ladok_base_url,
-    )
+    Response::builder()
+        .html(|o| templates::about(o, &ctx.canvas_host, &ctx.ladok_base_url))
+        .unwrap()
 }
 
 fn monitor() -> impl Reply {
@@ -212,7 +228,7 @@ fn export_step_2(_ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     if let Some(error) = query.error {
         if error == "access_denied" {
             warn!("/export2 accessed without giving permission. Ignoring the request...");
-            return bad_request("Access denied. You need to authorize this app to use it");
+            return access_denied();
         }
         error!("/export2 accessed with an unexpected 'error' parameter which value is: {:?}. Ignoring the request...", error);
         return bad_request("An error ocurred. Please try it later.");
@@ -224,39 +240,30 @@ fn export_step_2(_ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     }
 
     Response::builder()
-        .body(format!("<link rel='stylesheet' href='/api/lms-export-results/kth-style/css/kth-bootstrap.css'>\
-                       \n<div>Collecting all the data...</div>\
-                       \n<script>document.location='export3?{}'</script>\n",
-                      serde_urlencoded::to_string(query).unwrap()).into_bytes()).unwrap()
+        .html(|o| {
+            templates::collecting(
+                o,
+                &query.sisCourseId,
+                &format!("export3?{}", serde_urlencoded::to_string(&query).unwrap()),
+            )
+        })
+        .unwrap()
 }
 
 fn bad_request(message: &str) -> Response<Vec<u8>> {
     Response::builder()
         .status(StatusCode::BAD_REQUEST)
-        .body(
-            format!(
-            "<link rel='stylesheet' href='/api/lms-export-results/kth-style/css/kth-bootstrap.css'>\
-             \n<div aria-live='polite' role='alert' class='alert alert-danger'>{}</div>\n",
-            message,
-            )
-            .into_bytes(),
-        )
+        .html(|o| templates::error(o, StatusCode::BAD_REQUEST, message))
         .unwrap()
 }
 
-fn access_denied(message: &str) -> Response<Vec<u8>> {
+fn access_denied() -> Response<Vec<u8>> {
+    let status = StatusCode::UNAUTHORIZED;
+    let msg = "You should launch this application from a Canvas course";
     Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .body(format!(
-            "<link rel='stylesheet' href='/api/lms-export-results/kth-style/css/kth-bootstrap.css'>\
-             \n<div aria-live='polite' role='alert' class='alert alert-danger'>\
-             \n<h3>Access denied</h3>\
-             \n<p>{}</p>\
-             \n<ul><li>If you have refreshed the browser, close the window or tab and launch it again from Canvas</li></ul>\
-             \n</div>\n",
-            message
-        )
-              .into_bytes()).unwrap()
+        .status(status)
+        .html(|o| templates::error(o, status, msg))
+        .unwrap()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -278,7 +285,7 @@ fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
         Ok(client) => client,
         Err(e) => {
             warn!("The access token cannot be retrieved from Canvas: {}", e);
-            return access_denied("You should launch this application from a Canvas course");
+            return access_denied();
         }
     };
 
@@ -290,18 +297,7 @@ fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     .unwrap();
 
     Response::builder()
-        .body(
-            format!(
-                "<html>\
-                 \n<body>\
-                 \n  <h1>Anropet till Ladok gick bra</h1>\
-                 \n  <pre>{:#?}</pre>\
-                 \n</body>\
-                 \n</html>\n",
-                result,
-            )
-            .into_bytes(),
-        )
+        .html(|o| templates::done(o, result))
         .unwrap()
 }
 
@@ -385,7 +381,7 @@ fn do_report(
 }
 
 #[derive(Debug)]
-struct ExportResults {
+pub struct ExportResults {
     students: BTreeMap<u32, String>,
     created: Result<usize, String>,
     updated: Result<usize, String>,
@@ -474,3 +470,5 @@ enum ChangeToLadok {
     NoChange(String),
     NoGrade,
 }
+
+include!(concat!(env!("OUT_DIR"), "/templates.rs"));

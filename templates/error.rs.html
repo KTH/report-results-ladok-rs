@@ -1,0 +1,12 @@
+@use warp::http::StatusCode;
+@use super::page;
+
+@(code: StatusCode, message: &str)
+
+@:page(&format!("Error {}", code), {
+<div aria-live='polite' role='alert' class='alert alert-danger'>
+<h1>@code.canonical_reason().unwrap_or("error")</h1>
+<p>@message (@code.as_u16())</p>
+<p>If you have refreshed the browser, close the window or tab and launch it again from Canvas</p>
+</div>
+})

@@ -1,0 +1,23 @@
+@use super::page;
+@use super::super::ExportResults;
+
+@(result: ExportResults)
+
+@:page("Export klar", {
+<h1>Export klar</h1>
+
+<p>
+@if let Ok(created) = result.created {Skapat @created resultat i Ladok. }
+@if let Ok(updated) = result.created {Uppdaterat @updated resultat i Ladok. }
+</p>
+
+@if let Err(e) = result.created {
+<div class="error"><h2>Misslyckades med att skapa resultat i Ladok</h2><p>@e</p></div>
+}
+@if let Err(e) = result.updated {
+<div class="error"><h2>Misslyckades med att uppdatera resultat i Ladok</h2><p>@e</p></div>
+}
+<ul>@for item in result.students {
+  <li>@item.0: @item.1</li>}
+</ul>
+})

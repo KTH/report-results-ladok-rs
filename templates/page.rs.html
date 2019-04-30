@@ -1,0 +1,14 @@
+@use super::statics::simple_css;
+
+@(title: &str, content: Content)
+
+<!doctype html>
+<html>
+  <head>
+    <title>@title</title>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="stylesheet" href='/api/@env!("CARGO_PKG_NAME")/s/@simple_css.name' type="text/css"/>
+  </head>
+  <body>@:content()</body>
+</html>
