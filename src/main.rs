@@ -3,6 +3,7 @@ use failure::{format_err, Error};
 use log::{error, info, warn};
 use reqwest::{Client, Identity};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::env::var;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -302,18 +303,20 @@ fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
             .into_bytes(),
         )
         .unwrap()
-    /*} else {
-      res.send('Inga resultat skickade :(')
-    }*/
 }
 
-fn do_report(canvas: &Canvas, ladok: &mut Ladok, sis_courseroom: &str) -> Result<(), Error> {
+fn do_report(
+    canvas: &Canvas,
+    ladok: &mut Ladok,
+    sis_courseroom: &str,
+) -> Result<ExportResults, Error> {
     let kurstillf = canvas
         .get_course(sis_courseroom)?
         .integration_id
         .ok_or_else(|| format_err!("Canvas room {} is lacking integration id", sis_courseroom))?;
 
     let submissions = canvas.get_submissions(sis_courseroom)?;
+    let mut retval = ExportResults::new();
 
     for assignment in canvas
         .get_assignments(sis_courseroom)?
@@ -334,55 +337,94 @@ fn do_report(canvas: &Canvas, ladok: &mut Ladok, sis_courseroom: &str) -> Result
             .iter()
             .filter(|s| s.assignment_id == Some(assignment.id))
         {
-            match dbg!(canvas.get_user_uid(dbg!(&submission.user_id).unwrap())).and_then(
-                |student| prepare_ladok_change(ladok, student, &resultat, moment_id, submission),
-            ) {
-                Ok(ChangeToLadok::Update(data)) => update_queue.push(data),
-                Ok(ChangeToLadok::Create(data)) => create_queue.push(data),
-                Ok(ChangeToLadok::NoChange) => (),
-                Err(e) => eprintln!("Error {}", e),
+            if let Some(canvas_user) = submission.user_id {
+                match canvas.get_user_uid(canvas_user).and_then(|student| {
+                    prepare_ladok_change(ladok, &student, &resultat, moment_id, submission)
+                }) {
+                    Ok(ChangeToLadok::Update(data, grade)) => {
+                        update_queue.push(data);
+                        retval.add(canvas_user, &format!(" Updated ({}) ", grade));
+                    }
+                    Ok(ChangeToLadok::Create(data, grade)) => {
+                        create_queue.push(data);
+                        retval.add(canvas_user, &format!(" Created ({}) ", grade));
+                    }
+                    Ok(ChangeToLadok::NoChange(grade)) => {
+                        retval.add(canvas_user, &format!(" No change ({}) ", grade));
+                    }
+                    Ok(ChangeToLadok::NoGrade) => {
+                        retval.add(canvas_user, " No grade ");
+                    }
+                    Err(e) => {
+                        eprintln!("Error {}", e);
+                        retval.add(canvas_user, &format!(" Error ({})", e));
+                    }
+                }
             }
         }
-        eprintln!(
+        info!(
             "There are {} results to create and {} to update",
             create_queue.len(),
             update_queue.len(),
         );
         if !create_queue.is_empty() {
-            let result = ladok.skapa_studieresultat(create_queue)?;
-            eprintln!("After create: {} results", result.len())
+            retval.created = ladok
+                .skapa_studieresultat(create_queue)
+                .map(|result| result.len())
+                .map_err(|e| e.to_string())
         }
         if !update_queue.is_empty() {
-            let result = ladok.uppdatera_studieresultat(update_queue)?;
-            eprintln!("After update: {} results", result.len())
+            retval.updated = ladok
+                .uppdatera_studieresultat(update_queue)
+                .map(|result| result.len())
+                .map_err(|e| e.to_string());
         }
     }
-    eprintln!("Ok.  Done.");
-    Ok(())
+    info!("Ok.  Done.");
+    Ok(retval)
+}
+
+#[derive(Debug)]
+struct ExportResults {
+    students: BTreeMap<u32, String>,
+    created: Result<usize, String>,
+    updated: Result<usize, String>,
+}
+
+impl ExportResults {
+    fn new() -> Self {
+        ExportResults {
+            students: BTreeMap::new(),
+            created: Ok(0),
+            updated: Ok(0),
+        }
+    }
+    fn add(&mut self, student: u32, status: &str) {
+        self.students.entry(student).or_default().push_str(status);
+    }
 }
 
 fn prepare_ladok_change(
     ladok: &mut Ladok,
-    student: String,
+    student: &str,
     resultat: &SokresultatStudieresultatResultat,
     moment_id: &str,
     submission: &Submission,
 ) -> Result<ChangeToLadok, Error> {
+    let grade = match &submission.grade {
+        Some(ref grade) => grade.to_uppercase(),
+        None => return Ok(ChangeToLadok::NoGrade),
+    };
+
     let one = resultat
         .find_student(&student)
-        .ok_or_else(|| format_err!("Failed to find result for student {}", student))?;
+        .ok_or_else(|| format_err!("Student {} not in Ladok result-list", student))?;
 
     let betygskala = one
         .get_betygsskala()
         .ok_or_else(|| format_err!("Missing Betygskala for student {}", student))?;
-    let grade = match &submission.grade {
-        Some(ref grade) => grade,
-        None => {
-            info!("No grade for student {} in {:?}", student, submission);
-            return Ok(ChangeToLadok::NoChange);
-        }
-    };
-    let grade = ladok.get_grade(betygskala, grade)?;
+
+    let grade = ladok.get_grade(betygskala, &grade)?;
 
     let exam_date = submission
         .graded_at
@@ -396,32 +438,39 @@ fn prepare_ladok_change(
                 "Updating grade from {:?} to {:?} for {:?}",
                 underlag.Betygsgrad, grade, student
             );
-            ChangeToLadok::Update(UppdateraResultat {
+            ChangeToLadok::Update(
+                UppdateraResultat {
+                    Uid: one.Uid.clone(),
+                    Betygsgrad: Some(grade.ID),
+                    BetygsskalaID: betygskala,
+                    Examinationsdatum: Some(exam_date),
+                    ResultatUID: underlag.Uid.clone(),
+                    SenasteResultatandring: underlag.SenasteResultatandring,
+                },
+                grade.Kod.clone(),
+            )
+        } else {
+            eprintln!("Grade {:?} up to date for {:?}", grade, student);
+            ChangeToLadok::NoChange(grade.Kod.clone())
+        }
+    } else {
+        ChangeToLadok::Create(
+            SkapaResultat {
                 Uid: one.Uid.clone(),
                 Betygsgrad: Some(grade.ID),
                 BetygsskalaID: betygskala,
                 Examinationsdatum: Some(exam_date),
-                ResultatUID: underlag.Uid.clone(),
-                SenasteResultatandring: underlag.SenasteResultatandring,
-            })
-        } else {
-            eprintln!("Grade {:?} up to date for {:?}", grade, student);
-            ChangeToLadok::NoChange
-        }
-    } else {
-        ChangeToLadok::Create(SkapaResultat {
-            Uid: one.Uid.clone(),
-            Betygsgrad: Some(grade.ID),
-            BetygsskalaID: betygskala,
-            Examinationsdatum: Some(exam_date),
-            StudieresultatUID: one.Uid.clone(),
-            UtbildningsinstansUID: Some(moment_id.to_string()),
-        })
+                StudieresultatUID: one.Uid.clone(),
+                UtbildningsinstansUID: Some(moment_id.to_string()),
+            },
+            grade.Kod.clone(),
+        )
     })
 }
 
 enum ChangeToLadok {
-    Update(UppdateraResultat),
-    Create(SkapaResultat),
-    NoChange,
+    Update(UppdateraResultat, String),
+    Create(SkapaResultat, String),
+    NoChange(String),
+    NoGrade,
 }

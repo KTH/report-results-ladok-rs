@@ -9,11 +9,17 @@ use std::num::NonZeroU32;
 pub struct Betygsgrad {
     GiltigSomSlutbetyg: bool,
     pub ID: BetygsgradID,
-    Kod: String,
+    pub Kod: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialOrd, Ord, PartialEq, Eq)]
 pub struct BetygsgradID(NonZeroU32);
+
+impl fmt::Display for BetygsgradID {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        self.0.fmt(f)
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[allow(non_snake_case)]
