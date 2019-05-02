@@ -1,3 +1,4 @@
+use chrono::{Duration, Utc};
 use dotenv::dotenv;
 use failure::{format_err, Error};
 use log::{error, info, warn};
@@ -70,10 +71,11 @@ fn main() -> Result<(), Error> {
 fn static_file(name: Tail) -> Result<impl Reply, Rejection> {
     use templates::statics::StaticFile;
     if let Some(data) = StaticFile::get(name.as_str()) {
+        let far_expires = Utc::now() + Duration::days(180);
         Ok(Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, data.mime.as_ref())
-            // TODO: .far_expires()
+            .header(header::EXPIRES, far_expires.to_rfc2822())
             .body(data.content))
     } else {
         println!("Static file {:?} not found", name);
