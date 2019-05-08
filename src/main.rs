@@ -55,8 +55,7 @@ fn main() -> Result<(), Error> {
                     .map(export_step_3)),
         );
 
-    let addr = var("LISTEN");
-    let addr = addr
+    let addr = var("LISTEN")
         .as_ref()
         .map(AsRef::as_ref)
         .unwrap_or("127.0.0.1:3030")
