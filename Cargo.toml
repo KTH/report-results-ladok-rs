@@ -13,7 +13,7 @@ ructe = { version = "^0.6.2", features = ["sass", "mime03", "warp"] }
 [dependencies]
 base64 = "0.10.0"
 chrono = { version = "0.4.6", features = ["serde"] }
-dotenv = "0.13.0"
+dotenv = "0.14.0"
 env_logger = "0.6.1"
 failure = "0.1.5"
 log = "0.4.6"
