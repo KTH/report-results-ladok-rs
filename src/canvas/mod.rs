@@ -26,6 +26,7 @@ pub struct Submission {
 #[derive(Clone, Debug, Deserialize)]
 pub struct User {
     pub id: u32,
+    pub name: Option<String>,
     pub integration_id: Option<String>,
 }
 

@@ -401,7 +401,12 @@ impl ExportResults {
     fn add(&mut self, student: &User, status: &str) {
         self.students
             .entry(student.id)
-            .or_default()
+            .or_insert_with(|| {
+                format!(
+                    "{}: ",
+                    student.name.as_ref().map(|s| s.as_ref()).unwrap_or("-")
+                )
+            })
             .push_str(status);
     }
 }
