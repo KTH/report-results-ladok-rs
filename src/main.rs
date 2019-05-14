@@ -16,7 +16,7 @@ use warp::{body, get2 as get, path, post2 as post, query, Filter, Rejection, Rep
 
 mod canvas;
 mod ladok;
-use canvas::{Canvas, Submission};
+use canvas::{Canvas, Submission, User};
 use ladok::types::{SkapaResultat, SokresultatStudieresultatResultat, UppdateraResultat};
 use ladok::Ladok;
 use templates::RenderRucte;
@@ -334,28 +334,30 @@ fn do_report(
             .iter()
             .filter(|s| s.assignment_id == Some(assignment.id))
         {
-            if let Some(canvas_user) = submission.user_id {
-                match canvas.get_user_uid(canvas_user).and_then(|student| {
-                    prepare_ladok_change(ladok, &student, &resultat, moment_id, submission)
-                }) {
-                    Ok(ChangeToLadok::Update(data, grade)) => {
-                        update_queue.push(data);
-                        retval.add(canvas_user, &format!(" Updated ({}) ", grade));
+            if let Some(canvas_user) = &submission.user {
+                if let Some(student) = &canvas_user.integration_id {
+                    match prepare_ladok_change(ladok, &student, &resultat, moment_id, submission) {
+                        Ok(ChangeToLadok::Update(data, grade)) => {
+                            update_queue.push(data);
+                            retval.add(canvas_user, &format!(" Updated ({}) ", grade));
+                        }
+                        Ok(ChangeToLadok::Create(data, grade)) => {
+                            create_queue.push(data);
+                            retval.add(canvas_user, &format!(" Created ({}) ", grade));
+                        }
+                        Ok(ChangeToLadok::NoChange(grade)) => {
+                            retval.add(canvas_user, &format!(" No change ({}) ", grade));
+                        }
+                        Ok(ChangeToLadok::NoGrade) => {
+                            retval.add(canvas_user, " No grade ");
+                        }
+                        Err(e) => {
+                            eprintln!("Error {}", e);
+                            retval.add(canvas_user, &format!(" Error ({})", e));
+                        }
                     }
-                    Ok(ChangeToLadok::Create(data, grade)) => {
-                        create_queue.push(data);
-                        retval.add(canvas_user, &format!(" Created ({}) ", grade));
-                    }
-                    Ok(ChangeToLadok::NoChange(grade)) => {
-                        retval.add(canvas_user, &format!(" No change ({}) ", grade));
-                    }
-                    Ok(ChangeToLadok::NoGrade) => {
-                        retval.add(canvas_user, " No grade ");
-                    }
-                    Err(e) => {
-                        eprintln!("Error {}", e);
-                        retval.add(canvas_user, &format!(" Error ({})", e));
-                    }
+                } else {
+                    retval.add(canvas_user, " No integration_id ");
                 }
             }
         }
@@ -396,8 +398,11 @@ impl ExportResults {
             updated: Ok(0),
         }
     }
-    fn add(&mut self, student: u32, status: &str) {
-        self.students.entry(student).or_default().push_str(status);
+    fn add(&mut self, student: &User, status: &str) {
+        self.students
+            .entry(student.id)
+            .or_default()
+            .push_str(status);
     }
 }
 

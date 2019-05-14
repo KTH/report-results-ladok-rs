@@ -18,9 +18,15 @@ pub struct Assignment {
 pub struct Submission {
     pub assignment_id: Option<u32>,
     pub grade: Option<String>,
-    pub user_id: Option<u32>,
+    pub user: Option<User>,
     pub graded_at: Option<DateTime<FixedOffset>>,
     pub grader_id: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct User {
+    pub id: u32,
+    pub integration_id: Option<String>,
 }
 
 pub struct Canvas {
@@ -65,28 +71,11 @@ impl Canvas {
             .error_for_status()?
             .json()?)
     }
-    pub fn get_user_uid(&self, user_id: u32) -> Result<String, Error> {
-        #[derive(Deserialize)]
-        struct Data {
-            data: String,
-        }
-        Ok(self
-            .client
-            .get(&format!(
-                "{}/users/{}/custom_data/ladok_uid?ns=se.kth",
-                self.base_url, user_id
-            ))
-            .bearer_auth(&self.auth_key)
-            .send()?
-            .error_for_status()?
-            .json::<Data>()?
-            .data)
-    }
 
     pub fn get_submissions(&self, sis_id: &str) -> Result<Vec<Submission>, Error> {
         let mut result = vec![];
         let mut next_url = Some(format!(
-            "{}/courses/sis_course_id:{}/students/submissions?student_ids[]=all&per_page=100",
+            "{}/courses/sis_course_id:{}/students/submissions?student_ids[]=all&include[]=user&per_page=100",
             self.base_url, sis_id
         ));
         while let Some(url) = next_url {
