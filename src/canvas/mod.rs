@@ -9,6 +9,12 @@ pub struct CourseRoom {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct CourseSection {
+    pub name: Option<String>,
+    pub integration_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct Assignment {
     pub id: u32,
     pub integration_id: Option<String>,
@@ -45,14 +51,16 @@ impl Canvas {
         })
     }
 
-    /// A canvas course is really a course room, generally for a round.
+    /// The sections of a course room is the real connection to ladok course rounds.
     ///
-    /// sis_id will look like e.g. SF1624xxx
-    pub fn get_course(&self, sis_id: &str) -> Result<CourseRoom, Error> {
+    /// sis_id will look like e.g. LT1016VT191.  Each element of the
+    /// resulting section data may contain a ladok courseround oid in
+    /// the integration_id field.
+    pub fn get_course_sections(&self, sis_id: &str) -> Result<Vec<CourseSection>, Error> {
         Ok(self
             .client
             .get(&format!(
-                "{}/courses/sis_course_id:{}",
+                "{}/courses/sis_course_id:{}/sections",
                 self.base_url, sis_id
             ))
             .bearer_auth(&self.auth_key)

@@ -4,7 +4,7 @@ use failure::{format_err, Error};
 use log::{error, info, warn};
 use reqwest::{Client, Identity};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env::var;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -308,9 +308,18 @@ fn do_report(
     sis_courseroom: &str,
 ) -> Result<ExportResults, Error> {
     let kurstillf = canvas
-        .get_course(sis_courseroom)?
-        .integration_id
-        .ok_or_else(|| format_err!("Canvas room {} is lacking integration id", sis_courseroom))?;
+        .get_course_sections(sis_courseroom)?
+        .into_iter()
+        .filter_map(|s| s.integration_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<String>>();
+    if kurstillf.is_empty() {
+        return Err(format_err!(
+            "Canvas room {} is lacking integration id",
+            sis_courseroom
+        ));
+    }
 
     let submissions = canvas.get_submissions(sis_courseroom)?;
     let mut retval = ExportResults::new();
@@ -322,7 +331,7 @@ fn do_report(
     {
         let moment_id = assignment.integration_id.as_ref().unwrap();
         eprintln!(
-            "Should report on moment {} on course {}",
+            "Should report on moment {} on course {:?}",
             moment_id, kurstillf
         );
         let resultat = ladok.sok_studieresultat(&kurstillf, &moment_id)?;
