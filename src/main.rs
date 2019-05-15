@@ -321,7 +321,6 @@ fn do_report(
         ));
     }
 
-    let submissions = canvas.get_submissions(sis_courseroom)?;
     let mut retval = ExportResults::new();
 
     for assignment in canvas
@@ -334,6 +333,8 @@ fn do_report(
             "Should report on moment {} on course {:?}",
             moment_id, kurstillf
         );
+        let submissions = canvas.get_assignment_submissions(sis_courseroom, assignment.id)?;
+
         let resultat = ladok.sok_studieresultat(&kurstillf, &moment_id)?;
 
         let mut create_queue = vec![];

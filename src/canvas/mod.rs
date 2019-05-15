@@ -81,11 +81,15 @@ impl Canvas {
             .json()?)
     }
 
-    pub fn get_submissions(&self, sis_id: &str) -> Result<Vec<Submission>, Error> {
+    pub fn get_assignment_submissions(
+        &self,
+        sis_id: &str,
+        assignment: i32,
+    ) -> Result<Vec<Submission>, Error> {
         let mut result = vec![];
         let mut next_url = Some(format!(
-            "{}/courses/sis_course_id:{}/students/submissions?student_ids[]=all&include[]=user&per_page=100",
-            self.base_url, sis_id
+            "{}/courses/sis_course_id:{}/assignments/{}/submissions?student_ids[]=all&include[]=user&per_page=100",
+            self.base_url, sis_id, assignment
         ));
         while let Some(url) = next_url {
             let mut resp = self
