@@ -394,7 +394,7 @@ fn do_report(
 
 #[derive(Debug)]
 pub struct ExportResults {
-    students: BTreeMap<u32, String>,
+    students: BTreeMap<i32, String>,
     created: Result<usize, String>,
     updated: Result<usize, String>,
 }

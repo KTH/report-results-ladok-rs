@@ -16,22 +16,22 @@ pub struct CourseSection {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Assignment {
-    pub id: u32,
+    pub id: i32,
     pub integration_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Submission {
-    pub assignment_id: Option<u32>,
+    pub assignment_id: Option<i32>,
     pub grade: Option<String>,
     pub user: Option<User>,
     pub graded_at: Option<DateTime<FixedOffset>>,
-    pub grader_id: Option<u32>,
+    pub grader_id: Option<i32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct User {
-    pub id: u32,
+    pub id: i32,
     pub name: Option<String>,
     pub integration_id: Option<String>,
 }
