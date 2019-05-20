@@ -414,7 +414,7 @@ impl ExportResults {
             .or_insert_with(|| {
                 format!(
                     "{}: ",
-                    student.name.as_ref().map(|s| s.as_ref()).unwrap_or("-")
+                    student.name.as_ref().map(AsRef::as_ref).unwrap_or("-")
                 )
             })
             .push_str(status);
