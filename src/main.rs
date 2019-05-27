@@ -49,9 +49,9 @@ fn main() -> Result<(), Error> {
                     .and(query())
                     .map(export_step_2))
                 .or(path("export3")
-                    .and(get())
+                    .and(post())
                     .and(ctx.clone())
-                    .and(query())
+                    .and(body::form())
                     .map(export_step_3)),
         );
 
@@ -143,6 +143,9 @@ impl ServerContext {
         info!("Got access token for {:?}", oauth.user);
         Canvas::new(&self.canvas_host, &oauth.access_token)
     }
+    fn canvas_by_access_token(&self, access_token: &str) -> Result<Canvas, Error> {
+        Canvas::new(&self.canvas_host, access_token)
+    }
     fn get_oath_url(&self, next_url: &str) -> String {
         format!(
             "https://{}/login/oauth2/auth?{}",
@@ -220,7 +223,36 @@ struct ExportPostData {
     code: Option<String>,
 }
 
-fn export_step_2(_ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
+fn export_step_2(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
+    let canvas = match ctx.auth_canvas_client(query.code.as_ref().unwrap()) {
+        Ok(client) => client,
+        Err(e) => {
+            warn!("The access token cannot be retrieved from Canvas: {}", e);
+            return access_denied();
+        }
+    };
+
+    let modules = match canvas.get_assignments(&query.sisCourseId) {
+        Ok(m) => m,
+        Err(e) => {
+            warn!(
+                "Failed to get assignments for {:?}: {}",
+                query.sisCourseId, e,
+            );
+            return bad_request("Failed to get assignments for course room");
+        }
+    };
+    let modules = modules
+        .into_iter()
+        .filter_map(|a| {
+            if let Some(i_id) = a.integration_id {
+                Some((a.name.unwrap_or_else(|| "(unknown)".into()), a.id, i_id))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
     if query.canvasCourseId.is_none() {
         warn!("/export2 accessed with missing parameters. Ignoring the request...");
         return bad_request("The URL you are accessing needs extra parameters, please check it. If you came here by a link, inform us about this error.");
@@ -244,8 +276,10 @@ fn export_step_2(_ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
         .html(|o| {
             templates::collecting(
                 o,
+                canvas.get_auth_key(),
+                &query.canvasCourseId.unwrap(),
                 &query.sisCourseId,
-                &format!("export3?{}", serde_urlencoded::to_string(&query).unwrap()),
+                &modules,
             )
         })
         .unwrap()
@@ -276,13 +310,21 @@ struct QueryArgs {
     sisCourseId: String,
 }
 
-fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
+#[derive(Debug, Deserialize, Serialize)]
+#[allow(non_snake_case)]
+struct Step3Args {
+    canvas_token: String,
+    canvas_course_id: Option<String>,
+    sis_course_id: String,
+}
+
+fn export_step_3(ctx: Arc<ServerContext>, query: Step3Args) -> impl Reply {
     info!(
         "Should export for {:?} / {:?}",
-        query.sisCourseId, query.canvasCourseId,
+        query.sis_course_id, query.canvas_course_id,
     );
 
-    let canvas = match ctx.auth_canvas_client(query.code.as_ref().unwrap()) {
+    let canvas = match ctx.canvas_by_access_token(&query.canvas_token) {
         Ok(client) => client,
         Err(e) => {
             warn!("The access token cannot be retrieved from Canvas: {}", e);
@@ -293,7 +335,7 @@ fn export_step_3(ctx: Arc<ServerContext>, query: QueryArgs) -> impl Reply {
     let result = (|| {
         let mut ladok = ctx.ladok_client()?;
 
-        do_report(&canvas, &mut ladok, &query.sisCourseId)
+        do_report(&canvas, &mut ladok, &query.sis_course_id)
     })()
     .unwrap();
 

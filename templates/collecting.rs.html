@@ -1,9 +1,26 @@
 @use super::page;
 
-@(course: &str, url: &str)
+@(access_token: &str, canvas_course_id: &str, sis_course_id: &str, modules: &[(String, i32, String)])
 
-@:page("Collecting data ...", {
-<h1>Collecting data ...</h1>
-<div>Collecting all the data for @course ...</div>
-<script>document.location='@Html(url)'</script>
+@:page("Copy results to Ladok", {
+<p>Results from the exportable column(s) in the gradebook of
+@sis_course_id will be copied to Ladok, where they will appear as
+results in draft status.</p>
+
+<p>After that, you need to log in to ladok to mark the results as
+ready, after which the examiner can attest them.</p>
+
+<p>The following module(s) will be exported:</p>
+
+<ul>@for (name, canvas, ladok) in modules {
+  <li title="Column #@canvas in canvas to module @ladok in ladok">@name</li>
+}</ul>
+
+<form action="export3" method="post">
+  <p>Click to actually export</p>
+  <input type="hidden" name="canvas_token" value="@access_token"/>
+  <input type="hidden" name="canvas_course_id" value="@canvas_course_id"/>
+  <input type="hidden" name="sis_course_id" value="@sis_course_id"/>
+  <button type="submit" onclick="document.querySelector('body').classList.add('working');return true">Export results</button>
+</form>
 })

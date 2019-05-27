@@ -17,6 +17,7 @@ pub struct CourseSection {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Assignment {
     pub id: i32,
+    pub name: Option<String>,
     pub integration_id: Option<String>,
 }
 
@@ -49,6 +50,9 @@ impl Canvas {
             auth_key: auth_key.into(),
             client: Client::builder().build()?,
         })
+    }
+    pub fn get_auth_key(&self) -> &str {
+        &self.auth_key
     }
 
     /// The sections of a course room is the real connection to ladok course rounds.

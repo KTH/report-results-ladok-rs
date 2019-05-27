@@ -2,3 +2,20 @@ body {
     background: white;
     color: black;
 }
+
+body.working::after {
+    background: #ddd;
+    content: " ... please wait ....";
+    display: block;
+    height: 100%;
+    left: 0;
+    opacity: 0.9;
+    padding: 1em;
+    padding-top: 30vh;
+    position: fixed;
+    text-align: center;
+    top: 0;
+    width: -moz-available;
+    width: -webkit-fill-available;
+    width: fill-available;
+}
